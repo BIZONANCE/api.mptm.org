@@ -13,10 +13,16 @@ const PORT = process.env.PORT || 5000;
 app.use(
     cors({
         origin: (origin, callback) => {
-            if (!origin || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+            const allowedOrigins = [
+                "https://admin.mptmamravati.org",
+                "https://www.mptmamravati.org",
+                "https://mptmamravati.org"
+            ];
+            
+            if (!origin || allowedOrigins.includes(origin) || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
                 callback(null, true);
             } else {
-                callback(null, true);
+                callback(new Error('Not allowed by CORS'));
             }
         },
         credentials: true,
