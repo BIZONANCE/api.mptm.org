@@ -1,0 +1,55 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Admin {
+  id        String   @id @default(cuid())
+  username  String   @unique
+  password  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model MemberRegistration {
+  id                String         @id @default(cuid())
+  receiptNo         String         @unique
+  date              String
+  registrationFee   Int
+  amountInWords     String
+  address           String
+  paymentMethod     String
+  paymentScreenshot String?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  mainMembers       MainMember[]
+  familyMembers     FamilyMember[]
+}
+
+model MainMember {
+  id             String             @id @default(cuid())
+  registrationId String
+  srNo           Int
+  memberNo       String
+  fullName       String
+  mobileNo       String
+  prabhagNo      String
+  registration   MemberRegistration @relation(fields: [registrationId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+}
+
+model FamilyMember {
+  id             String             @id @default(cuid())
+  registrationId String
+  srNo           Int
+  name           String
+  relation       String
+  dob            String
+  occupation     String
+  mobile         String
+  registration   MemberRegistration @relation(fields: [registrationId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+}
