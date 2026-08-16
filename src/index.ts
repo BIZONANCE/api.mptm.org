@@ -9,29 +9,29 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Enable CORS for frontend
-app.use(
-    cors({
-        origin: (origin, callback) => {
-            const allowedOrigins = [
-                "https://admin.mptmamravati.org",
-                "https://www.mptmamravati.org",
-                "https://mptmamravati.org"
-            ];
-            
-            if (!origin || allowedOrigins.includes(origin) || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
-                callback(null, true);
-            } else {
-                callback(new Error('Not allowed by CORS'));
-            }
-        },
-        methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
-        credentials: true,
-    })
-);
+const corsOptions = {
+    origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
+        const allowedOrigins = [
+            "https://admin.mptmamravati.org",
+            "https://www.mptmamravati.org",
+            "https://mptmamravati.org"
+        ];
+        
+        if (!origin || allowedOrigins.includes(origin) || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+            callback(null, true);
+        } else {
+            callback(new Error('Not allowed by CORS'));
+        }
+    },
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+    credentials: true,
+};
 
-app.options("*", cors());
+// Enable CORS for frontend
+app.use(cors(corsOptions));
+
+app.options("*", cors(corsOptions));
 
 // Helper function to delete registration entry cleanly with manual cascade fallback
 const deleteRegistrationByIdOrReceipt = async (identifier: string) => {
