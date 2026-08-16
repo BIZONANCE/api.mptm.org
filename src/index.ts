@@ -25,9 +25,128 @@ app.use(
                 callback(new Error('Not allowed by CORS'));
             }
         },
+        methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
         credentials: true,
     })
 );
+
+app.options("*", cors());
+
+// Helper function to delete registration entry cleanly with manual cascade fallback
+const deleteRegistrationByIdOrReceipt = async (identifier: string) => {
+    // 1. Find target registration by ID or receiptNo
+    const target = await prisma.memberRegistration.findFirst({
+        where: {
+            OR: [
+                { id: identifier },
+                { receiptNo: identifier }
+            ]
+        }
+    });
+
+    if (!target) {
+        return null;
+    }
+
+    const regId = target.id;
+
+    // Use transaction to delete family members, main members, and registration
+    const [deletedFamily, deletedMain, deletedReg] = await prisma.$transaction([
+        prisma.familyMember.deleteMany({ where: { registrationId: regId } }),
+        prisma.mainMember.deleteMany({ where: { registrationId: regId } }),
+        prisma.memberRegistration.delete({ where: { id: regId } })
+    ]);
+
+    return {
+        registration: deletedReg,
+        mainCount: deletedMain.count,
+        familyCount: deletedFamily.count
+    };
+};
+
+// DELETE /api/register/:id - Delete registration entry by ID
+app.delete("/api/register/:id", async (req: Request, res: Response) => {
+    try {
+        const identifier = String(req.params.id);
+        const result = await deleteRegistrationByIdOrReceipt(identifier);
+
+        if (!result) {
+            res.status(404).json({
+                success: false,
+                error: "हा नोंदणी अर्ज सापडला नाही किंवा आधीच हटवला आहे!",
+            });
+            return;
+        }
+
+        res.json({
+            success: true,
+            message: "नोंदणी अर्ज यशस्वीरित्या डेटाबेसमधून हटवला गेला",
+            data: result.registration,
+        });
+    } catch (error: any) {
+        console.error("Delete Registration Error:", error);
+        res.status(500).json({
+            success: false,
+            error: "डेटाबेस सर्व्हर त्रुटी: " + (error.message || "हटवताना अनपेक्षित त्रुटी झाली"),
+        });
+    }
+});
+
+// POST /api/register/delete/:id - Fallback route for POST method deletion
+app.post("/api/register/delete/:id", async (req: Request, res: Response) => {
+    try {
+        const identifier = String(req.params.id);
+        const result = await deleteRegistrationByIdOrReceipt(identifier);
+
+        if (!result) {
+            res.status(404).json({
+                success: false,
+                error: "हा नोंदणी अर्ज सापडला नाही किंवा आधीच हटवला आहे!",
+            });
+            return;
+        }
+
+        res.json({
+            success: true,
+            message: "नोंदणी अर्ज यशस्वीरित्या डेटाबेसमधून हटवला गेला",
+            data: result.registration,
+        });
+    } catch (error: any) {
+        console.error("Delete Registration Error:", error);
+        res.status(500).json({
+            success: false,
+            error: "डेटाबेस सर्व्हर त्रुटी: " + (error.message || "हटवताना अनपेक्षित त्रुटी झाली"),
+        });
+    }
+});
+
+app.delete("/api/registrations/:id", async (req: Request, res: Response) => {
+    try {
+        const identifier = String(req.params.id);
+        const result = await deleteRegistrationByIdOrReceipt(identifier);
+
+        if (!result) {
+            res.status(404).json({
+                success: false,
+                error: "हा नोंदणी अर्ज सापडला नाही किंवा आधीच हटवला आहे!",
+            });
+            return;
+        }
+
+        res.json({
+            success: true,
+            message: "नोंदणी अर्ज यशस्वीरित्या डेटाबेसमधून हटवला गेला",
+            data: result.registration,
+        });
+    } catch (error: any) {
+        console.error("Delete Registration Error:", error);
+        res.status(500).json({
+            success: false,
+            error: "डेटाबेस सर्व्हर त्रुटी: " + (error.message || "हटवताना अनपेक्षित त्रुटी झाली"),
+        });
+    }
+});
 
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
@@ -230,6 +349,31 @@ app.post("/api/register", async (req: Request, res: Response) => {
             return;
         }
 
+        // Duplicate Validation Check for Main Member Mobile Number or Full Name
+        for (const m of mainMembers) {
+            if (m.mobileNo && m.mobileNo.trim().length === 10) {
+                const existingMember = await prisma.mainMember.findFirst({
+                    where: {
+                        OR: [
+                            { mobileNo: m.mobileNo.trim() },
+                            { fullName: m.fullName.trim() }
+                        ]
+                    },
+                    include: {
+                        registration: true
+                    }
+                });
+
+                if (existingMember) {
+                    res.status(400).json({
+                        success: false,
+                        error: `हा मोबाईल क्रमांक (${m.mobileNo}) किंवा नाव (${m.fullName}) आधीच नोंदणीकृत आहे! (पावती क्र: ${existingMember.registration?.receiptNo || 'अस्तित्वात आहे'}). हा डेटा आधीच अस्तित्वात आहे!`,
+                    });
+                    return;
+                }
+            }
+        }
+
         const feeNumber = parseInt(formData.registrationFee, 10) || 101;
 
         const registration = await prisma.memberRegistration.create({
@@ -271,7 +415,7 @@ app.post("/api/register", async (req: Request, res: Response) => {
 
         res.json({
             success: true,
-            message: "सदस्य नोंदणी डेटाबेसमध्ये (Neon PostgreSQL) यशस्वीरित्या जतन झाली!",
+            message: "सदस्य नोंदणी यशस्वीरित्या जतन झाली!",
             data: registration,
         });
     } catch (error: any) {
@@ -286,6 +430,65 @@ app.post("/api/register", async (req: Request, res: Response) => {
         res.status(500).json({
             success: false,
             error: "डेटाबेस सर्व्हर त्रुटी: " + (error.message || "अनपेक्षित त्रुटी"),
+        });
+    }
+});
+
+// DELETE /api/register/:id - Delete registration entry by ID
+app.delete("/api/register/:id", async (req: Request, res: Response) => {
+    try {
+        const id = String(req.params.id);
+
+        if (!id) {
+            res.status(400).json({
+                success: false,
+                error: "नोंदणी आयडी (Registration ID) आवश्यक आहे",
+            });
+            return;
+        }
+
+        // Delete MemberRegistration record (Prisma will cascade delete mainMembers & familyMembers)
+        const deletedRegistration = await prisma.memberRegistration.delete({
+            where: { id },
+        });
+
+        res.json({
+            success: true,
+            message: "नोंदणी अर्ज यशस्वीरित्या हटवला गेला",
+            data: deletedRegistration,
+        });
+    } catch (error: any) {
+        console.error("Delete Registration Error:", error);
+        if (error.code === "P2025") {
+            res.status(404).json({
+                success: false,
+                error: "हा नोंदणी अर्ज सापडला नाही किंवा आधीच हटवला आहे!",
+            });
+            return;
+        }
+        res.status(500).json({
+            success: false,
+            error: "डेटाबेस सर्व्हर त्रुटी: " + (error.message || "हटवताना अनपेक्षित त्रुटी झाली"),
+        });
+    }
+});
+
+app.delete("/api/registrations/:id", async (req: Request, res: Response) => {
+    try {
+        const id = String(req.params.id);
+        const deletedRegistration = await prisma.memberRegistration.delete({
+            where: { id },
+        });
+        res.json({
+            success: true,
+            message: "नोंदणी अर्ज यशस्वीरित्या हटवला गेला",
+            data: deletedRegistration,
+        });
+    } catch (error: any) {
+        console.error("Delete Registration Error:", error);
+        res.status(500).json({
+            success: false,
+            error: error.message || "हटवताना अनपेक्षित त्रुटी झाली",
         });
     }
 });
