@@ -9,6 +9,7 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// Strict CORS Configuration
 const corsOptions = {
     origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
         const allowedOrigins = [
@@ -30,8 +31,10 @@ const corsOptions = {
 
 // Enable CORS for frontend
 app.use(cors(corsOptions));
-
 app.options("*", cors(corsOptions));
+
+app.use(express.json({ limit: "50mb" }));
+app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
 // Helper function to delete registration entry cleanly with manual cascade fallback
 const deleteRegistrationByIdOrReceipt = async (identifier: string) => {
@@ -121,6 +124,7 @@ app.post("/api/register/delete/:id", async (req: Request, res: Response) => {
     }
 });
 
+// DELETE /api/registrations/:id - Alternative deletion endpoint
 app.delete("/api/registrations/:id", async (req: Request, res: Response) => {
     try {
         const identifier = String(req.params.id);
@@ -147,9 +151,6 @@ app.delete("/api/registrations/:id", async (req: Request, res: Response) => {
         });
     }
 });
-
-app.use(express.json({ limit: "50mb" }));
-app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
 // Root Route
 app.get("/", (_req: Request, res: Response) => {
@@ -271,8 +272,6 @@ app.post("/api/admin/login", async (req: Request, res: Response) => {
     }
 });
 
-
-
 // GET /api/next-numbers - Generate next unique sequence numbers for receipt and member
 app.get("/api/next-numbers", async (_req: Request, res: Response) => {
     try {
@@ -281,9 +280,10 @@ app.get("/api/next-numbers", async (_req: Request, res: Response) => {
 
         const nextReceiptSeq = totalRegistrations + 1;
         const nextMemberSeq = totalMainMembers + 1;
+        const currentYear = new Date().getFullYear();
 
-        const nextReceiptNo = `MPTM${String(nextReceiptSeq).padStart(3, "0")}`;
-        const nextMemberNo = `AVA${String(nextMemberSeq).padStart(3, "0")}`;
+        const nextReceiptNo = `MPTM-${currentYear}-AMT-R${String(nextReceiptSeq).padStart(3, "0")}`;
+        const nextMemberNo = `MPTM-${currentYear}-AMT-S${String(nextMemberSeq).padStart(3, "0")}`;
 
         res.json({
             success: true,
@@ -294,12 +294,13 @@ app.get("/api/next-numbers", async (_req: Request, res: Response) => {
         });
     } catch (error: any) {
         console.error("Next numbers error:", error);
+        const currentYear = new Date().getFullYear();
         res.json({
             success: true,
-            receiptNo: "MPTM001",
+            receiptNo: `MPTM-${currentYear}-AMT-R001`,
             nextReceiptSeq: 1,
             nextMemberSeq: 1,
-            nextMemberNo: "AVA001",
+            nextMemberNo: `MPTM-${currentYear}-AMT-S001`,
         });
     }
 });
@@ -430,65 +431,6 @@ app.post("/api/register", async (req: Request, res: Response) => {
         res.status(500).json({
             success: false,
             error: "डेटाबेस सर्व्हर त्रुटी: " + (error.message || "अनपेक्षित त्रुटी"),
-        });
-    }
-});
-
-// DELETE /api/register/:id - Delete registration entry by ID
-app.delete("/api/register/:id", async (req: Request, res: Response) => {
-    try {
-        const id = String(req.params.id);
-
-        if (!id) {
-            res.status(400).json({
-                success: false,
-                error: "नोंदणी आयडी (Registration ID) आवश्यक आहे",
-            });
-            return;
-        }
-
-        // Delete MemberRegistration record (Prisma will cascade delete mainMembers & familyMembers)
-        const deletedRegistration = await prisma.memberRegistration.delete({
-            where: { id },
-        });
-
-        res.json({
-            success: true,
-            message: "नोंदणी अर्ज यशस्वीरित्या हटवला गेला",
-            data: deletedRegistration,
-        });
-    } catch (error: any) {
-        console.error("Delete Registration Error:", error);
-        if (error.code === "P2025") {
-            res.status(404).json({
-                success: false,
-                error: "हा नोंदणी अर्ज सापडला नाही किंवा आधीच हटवला आहे!",
-            });
-            return;
-        }
-        res.status(500).json({
-            success: false,
-            error: "डेटाबेस सर्व्हर त्रुटी: " + (error.message || "हटवताना अनपेक्षित त्रुटी झाली"),
-        });
-    }
-});
-
-app.delete("/api/registrations/:id", async (req: Request, res: Response) => {
-    try {
-        const id = String(req.params.id);
-        const deletedRegistration = await prisma.memberRegistration.delete({
-            where: { id },
-        });
-        res.json({
-            success: true,
-            message: "नोंदणी अर्ज यशस्वीरित्या हटवला गेला",
-            data: deletedRegistration,
-        });
-    } catch (error: any) {
-        console.error("Delete Registration Error:", error);
-        res.status(500).json({
-            success: false,
-            error: error.message || "हटवताना अनपेक्षित त्रुटी झाली",
         });
     }
 });
