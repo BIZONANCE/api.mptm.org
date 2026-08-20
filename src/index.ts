@@ -2,6 +2,7 @@ import express, { Request, Response } from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import bcrypt from "bcryptjs";
+import nodemailer from "nodemailer";
 import { prisma } from "./prisma";
 
 dotenv.config();
@@ -15,7 +16,9 @@ const corsOptions = {
         const allowedOrigins = [
             "https://admin.mptmamravati.org",
             "https://www.mptmamravati.org",
-            "https://mptmamravati.org"
+            "https://mptmamravati.org",
+            "http://localhost:3001",
+            "http://localhost:3000"
         ];
         
         if (!origin || allowedOrigins.includes(origin) || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
@@ -275,15 +278,54 @@ app.post("/api/admin/login", async (req: Request, res: Response) => {
 // GET /api/next-numbers - Generate next unique sequence numbers for receipt and member
 app.get("/api/next-numbers", async (_req: Request, res: Response) => {
     try {
-        const totalRegistrations = await prisma.memberRegistration.count();
-        const totalMainMembers = await prisma.mainMember.count();
-
-        const nextReceiptSeq = totalRegistrations + 1;
-        const nextMemberSeq = totalMainMembers + 1;
         const currentYear = new Date().getFullYear();
+        const yearReceiptPrefix = `MPTM-${currentYear}-AMT-R`;
+        const yearMemberPrefix = `MPTM-${currentYear}-AMT-S`;
 
-        const nextReceiptNo = `MPTM-${currentYear}-AMT-R${String(nextReceiptSeq).padStart(3, "0")}`;
-        const nextMemberNo = `MPTM-${currentYear}-AMT-S${String(nextMemberSeq).padStart(3, "0")}`;
+        // Find existing registrations for current year prefix
+        const yearRegistrations = await prisma.memberRegistration.findMany({
+            where: {
+                receiptNo: {
+                    startsWith: yearReceiptPrefix,
+                },
+            },
+            select: { receiptNo: true },
+        });
+
+        // Find existing main members for current year prefix
+        const yearMainMembers = await prisma.mainMember.findMany({
+            where: {
+                memberNo: {
+                    startsWith: yearMemberPrefix,
+                },
+            },
+            select: { memberNo: true },
+        });
+
+        // Calculate next receipt sequence for current year
+        let maxReceiptSeq = 0;
+        for (const reg of yearRegistrations) {
+            const numPart = reg.receiptNo.replace(yearReceiptPrefix, "");
+            const seq = parseInt(numPart, 10);
+            if (!isNaN(seq) && seq > maxReceiptSeq) {
+                maxReceiptSeq = seq;
+            }
+        }
+        const nextReceiptSeq = Math.max(yearRegistrations.length, maxReceiptSeq) + 1;
+
+        // Calculate next member sequence for current year
+        let maxMemberSeq = 0;
+        for (const mem of yearMainMembers) {
+            const numPart = mem.memberNo.replace(yearMemberPrefix, "");
+            const seq = parseInt(numPart, 10);
+            if (!isNaN(seq) && seq > maxMemberSeq) {
+                maxMemberSeq = seq;
+            }
+        }
+        const nextMemberSeq = Math.max(yearMainMembers.length, maxMemberSeq) + 1;
+
+        const nextReceiptNo = `${yearReceiptPrefix}${String(nextReceiptSeq).padStart(3, "0")}`;
+        const nextMemberNo = `${yearMemberPrefix}${String(nextMemberSeq).padStart(3, "0")}`;
 
         res.json({
             success: true,
@@ -375,12 +417,53 @@ app.post("/api/register", async (req: Request, res: Response) => {
             }
         }
 
+function formatDateToDDMMYYYY(dateInput: string | Date | null | undefined): string {
+    if (!dateInput) return "";
+
+    if (dateInput instanceof Date) {
+        if (isNaN(dateInput.getTime())) return "";
+        const day = String(dateInput.getDate()).padStart(2, "0");
+        const month = String(dateInput.getMonth() + 1).padStart(2, "0");
+        const year = dateInput.getFullYear();
+        return `${day}/${month}/${year}`;
+    }
+
+    const str = String(dateInput).trim();
+    if (!str) return "";
+
+    if (/^\d{2}\/\d{2}\/\d{4}$/.test(str)) {
+        return str;
+    }
+
+    const isoMatch = str.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+    if (isoMatch) {
+        const [, yyyy, mm, dd] = isoMatch;
+        return `${dd.padStart(2, "0")}/${mm.padStart(2, "0")}/${yyyy}`;
+    }
+
+    const dashMatch = str.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
+    if (dashMatch) {
+        const [, dd, mm, yyyy] = dashMatch;
+        return `${dd.padStart(2, "0")}/${mm.padStart(2, "0")}/${yyyy}`;
+    }
+
+    const d = new Date(str);
+    if (!isNaN(d.getTime())) {
+        const day = String(d.getDate()).padStart(2, "0");
+        const month = String(d.getMonth() + 1).padStart(2, "0");
+        const year = d.getFullYear();
+        return `${day}/${month}/${year}`;
+    }
+
+    return str;
+}
+
         const feeNumber = parseInt(formData.registrationFee, 10) || 101;
 
         const registration = await prisma.memberRegistration.create({
             data: {
                 receiptNo: formData.receiptNo,
-                date: formData.date,
+                date: formatDateToDDMMYYYY(formData.date),
                 registrationFee: feeNumber,
                 amountInWords: formData.amountInWords || "",
                 address: formData.address || "",
@@ -402,7 +485,7 @@ app.post("/api/register", async (req: Request, res: Response) => {
                             srNo: f.srNo,
                             name: f.name || "",
                             relation: f.relation || "",
-                            dob: f.dob || "",
+                            dob: formatDateToDDMMYYYY(f.dob),
                             occupation: f.occupation || "",
                             mobile: f.mobile || "",
                         })),
@@ -433,6 +516,157 @@ app.post("/api/register", async (req: Request, res: Response) => {
             error: "डेटाबेस सर्व्हर त्रुटी: " + (error.message || "अनपेक्षित त्रुटी"),
         });
     }
+});
+
+// In-memory verification code store (Email -> { code, expiresAt })
+const verificationStore = new Map<string, { code: string; expiresAt: number }>();
+
+// Helper transporter creation (uses Gmail service or custom SMTP config)
+const createMailTransporter = async () => {
+    const rawUser = (process.env.SMTP_USER || "").trim();
+    const rawPass = (process.env.SMTP_PASS || "").replace(/\s+/g, "").trim();
+
+    if (rawUser && rawPass && rawUser !== "your-email@gmail.com") {
+        if (rawUser.endsWith("@gmail.com") || (process.env.SMTP_HOST || "").includes("gmail")) {
+            console.log(`📧 Initializing Gmail SMTP Transport for: ${rawUser}`);
+            return nodemailer.createTransport({
+                service: "gmail",
+                auth: {
+                    user: rawUser,
+                    pass: rawPass,
+                },
+            });
+        }
+
+        return nodemailer.createTransport({
+            host: process.env.SMTP_HOST || "smtp.gmail.com",
+            port: Number(process.env.SMTP_PORT) || 587,
+            secure: process.env.SMTP_SECURE === "true",
+            auth: {
+                user: rawUser,
+                pass: rawPass,
+            },
+        });
+    }
+
+    try {
+        const testAccount = await nodemailer.createTestAccount();
+        return nodemailer.createTransport({
+            host: "smtp.ethereal.email",
+            port: 587,
+            secure: false,
+            auth: {
+                user: testAccount.user,
+                pass: testAccount.pass,
+            },
+        });
+    } catch (err) {
+        return nodemailer.createTransport({
+            jsonTransport: true
+        });
+    }
+};
+
+// POST /api/users/send-verification - Send OTP to user email
+app.post("/api/users/send-verification", async (req: Request, res: Response) => {
+    try {
+        const { email } = req.body;
+        if (!email || typeof email !== "string" || !email.includes("@")) {
+            res.status(400).json({
+                success: false,
+                error: "वैध इमेल आयडी आवश्यक आहे!",
+            });
+            return;
+        }
+
+        const cleanEmail = email.trim().toLowerCase();
+        const code = String(Math.floor(100000 + Math.random() * 900000));
+        const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes
+
+        verificationStore.set(cleanEmail, { code, expiresAt });
+
+        let emailSent = false;
+        let previewUrl: string | boolean = false;
+
+        try {
+            const transporter = await createMailTransporter();
+            const senderUser = (process.env.SMTP_USER || "sdhole501@gmail.com").trim();
+            const info = await transporter.sendMail({
+                from: process.env.SMTP_FROM || `"MPTM Amravati" <${senderUser}>`,
+                to: cleanEmail,
+                subject: `🔑 MPTM Amravati - तुमचा इमेल पडताळणी कोड: ${code}`,
+                html: `
+                    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
+                        <div style="background-color: #7A0C0C; color: #ffffff; padding: 16px; text-align: center; border-radius: 8px 8px 0 0;">
+                            <h2 style="margin: 0; font-size: 20px;">🚩 महाराष्ट्र प्रांतिक तैलिक महासभा</h2>
+                            <p style="margin: 4px 0 0 0; font-size: 13px; color: #FCD34D;">अमरावती विभाग, अमरावती</p>
+                        </div>
+                        <div style="padding: 24px; text-align: center;">
+                            <h3 style="color: #1e293b; margin-top: 0;">इमेल पडताळणी कोड (Email Verification Code)</h3>
+                            <p style="color: #475569; font-size: 14px;">तुमचा ६-अंकी सुरक्षित पडताळणी कोड खालीलप्रमाणे आहे:</p>
+                            <div style="background-color: #EFF6FF; border: 2px dashed #2563EB; border-radius: 12px; padding: 16px; margin: 20px 0; display: inline-block;">
+                                <span style="font-family: monospace; font-size: 32px; font-weight: bold; letter-spacing: 6px; color: #1D4ED8;">${code}</span>
+                            </div>
+                            <p style="color: #64748B; font-size: 12px; margin-top: 16px;">हा कोड पुढील १० मिनिटांसाठी वैध राहील. कृपया हा कोड कोणासोबतही शेअर करू नका.</p>
+                        </div>
+                        <div style="border-top: 1px solid #e2e8f0; padding-top: 12px; text-align: center; color: #94a3b8; font-size: 11px;">
+                            © 2026 MPTM Amravati. All rights reserved.
+                        </div>
+                    </div>
+                `,
+            });
+            console.log("✉️ Real Email Dispatch Info:", info.messageId || info);
+            previewUrl = nodemailer.getTestMessageUrl(info);
+            if (previewUrl) {
+                console.log("🔗 Preview Real Sent Email at:", previewUrl);
+            }
+            emailSent = true;
+        } catch (mailErr) {
+            console.error("Nodemailer error:", mailErr);
+        }
+
+        res.json({
+            success: true,
+            message: `पडताळणी कोड ${cleanEmail} वर पाठवला आहे!`,
+            code,
+            emailSent,
+            previewUrl,
+        });
+    } catch (err: any) {
+        console.error("Send verification error:", err);
+        res.status(500).json({ success: false, error: err.message || "सर्व्हर त्रुटी" });
+    }
+});
+
+// POST /api/users/verify-code - Verify user code
+app.post("/api/users/verify-code", (req: Request, res: Response) => {
+    const { email, code } = req.body;
+    if (!email || !code) {
+        res.status(400).json({ success: false, error: "इमेल व पडताळणी कोड आवश्यक आहे!" });
+        return;
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+    const stored = verificationStore.get(cleanEmail);
+
+    if (!stored) {
+        res.status(400).json({ success: false, error: "या इमेलसाठी कोणताही पडताळणी कोड सापडला नाही!" });
+        return;
+    }
+
+    if (Date.now() > stored.expiresAt) {
+        verificationStore.delete(cleanEmail);
+        res.status(400).json({ success: false, error: "पडताळणी कोड कालबाह्य (expired) झाला आहे. नवीन कोड मागा." });
+        return;
+    }
+
+    if (stored.code.trim() !== String(code).trim()) {
+        res.status(400).json({ success: false, error: "प्रविष्ट केलेला पडताळणी कोड चुकीचा आहे!" });
+        return;
+    }
+
+    verificationStore.delete(cleanEmail);
+    res.json({ success: true, verified: true, message: "इमेल यशस्वीरित्या सत्यप्रमाणित झाला!" });
 });
 
 if (process.env.NODE_ENV !== "production" || !process.env.VERCEL) {
