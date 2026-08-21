@@ -3,7 +3,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import bcrypt from "bcryptjs";
 import nodemailer from "nodemailer";
-import { prisma } from "./prisma";
+import { prisma, withDbRetry } from "./prisma";
 
 dotenv.config();
 
@@ -20,7 +20,7 @@ const corsOptions = {
             "http://localhost:3001",
             "http://localhost:3000"
         ];
-        
+
         if (!origin || allowedOrigins.includes(origin) || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
             callback(null, true);
         } else {
@@ -41,34 +41,36 @@ app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
 // Helper function to delete registration entry cleanly with manual cascade fallback
 const deleteRegistrationByIdOrReceipt = async (identifier: string) => {
-    // 1. Find target registration by ID or receiptNo
-    const target = await prisma.memberRegistration.findFirst({
-        where: {
-            OR: [
-                { id: identifier },
-                { receiptNo: identifier }
-            ]
+    return withDbRetry(async () => {
+        // 1. Find target registration by ID or receiptNo
+        const target = await prisma.memberRegistration.findFirst({
+            where: {
+                OR: [
+                    { id: identifier },
+                    { receiptNo: identifier }
+                ]
+            }
+        });
+
+        if (!target) {
+            return null;
         }
+
+        const regId = target.id;
+
+        // Use transaction to delete family members, main members, and registration
+        const [deletedFamily, deletedMain, deletedReg] = await prisma.$transaction([
+            prisma.familyMember.deleteMany({ where: { registrationId: regId } }),
+            prisma.mainMember.deleteMany({ where: { registrationId: regId } }),
+            prisma.memberRegistration.delete({ where: { id: regId } })
+        ]);
+
+        return {
+            registration: deletedReg,
+            mainCount: deletedMain.count,
+            familyCount: deletedFamily.count
+        };
     });
-
-    if (!target) {
-        return null;
-    }
-
-    const regId = target.id;
-
-    // Use transaction to delete family members, main members, and registration
-    const [deletedFamily, deletedMain, deletedReg] = await prisma.$transaction([
-        prisma.familyMember.deleteMany({ where: { registrationId: regId } }),
-        prisma.mainMember.deleteMany({ where: { registrationId: regId } }),
-        prisma.memberRegistration.delete({ where: { id: regId } })
-    ]);
-
-    return {
-        registration: deletedReg,
-        mainCount: deletedMain.count,
-        familyCount: deletedFamily.count
-    };
 };
 
 // DELETE /api/register/:id - Delete registration entry by ID
@@ -417,46 +419,46 @@ app.post("/api/register", async (req: Request, res: Response) => {
             }
         }
 
-function formatDateToDDMMYYYY(dateInput: string | Date | null | undefined): string {
-    if (!dateInput) return "";
+        function formatDateToDDMMYYYY(dateInput: string | Date | null | undefined): string {
+            if (!dateInput) return "";
 
-    if (dateInput instanceof Date) {
-        if (isNaN(dateInput.getTime())) return "";
-        const day = String(dateInput.getDate()).padStart(2, "0");
-        const month = String(dateInput.getMonth() + 1).padStart(2, "0");
-        const year = dateInput.getFullYear();
-        return `${day}/${month}/${year}`;
-    }
+            if (dateInput instanceof Date) {
+                if (isNaN(dateInput.getTime())) return "";
+                const day = String(dateInput.getDate()).padStart(2, "0");
+                const month = String(dateInput.getMonth() + 1).padStart(2, "0");
+                const year = dateInput.getFullYear();
+                return `${day}/${month}/${year}`;
+            }
 
-    const str = String(dateInput).trim();
-    if (!str) return "";
+            const str = String(dateInput).trim();
+            if (!str) return "";
 
-    if (/^\d{2}\/\d{2}\/\d{4}$/.test(str)) {
-        return str;
-    }
+            if (/^\d{2}\/\d{2}\/\d{4}$/.test(str)) {
+                return str;
+            }
 
-    const isoMatch = str.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
-    if (isoMatch) {
-        const [, yyyy, mm, dd] = isoMatch;
-        return `${dd.padStart(2, "0")}/${mm.padStart(2, "0")}/${yyyy}`;
-    }
+            const isoMatch = str.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+            if (isoMatch) {
+                const [, yyyy, mm, dd] = isoMatch;
+                return `${dd.padStart(2, "0")}/${mm.padStart(2, "0")}/${yyyy}`;
+            }
 
-    const dashMatch = str.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
-    if (dashMatch) {
-        const [, dd, mm, yyyy] = dashMatch;
-        return `${dd.padStart(2, "0")}/${mm.padStart(2, "0")}/${yyyy}`;
-    }
+            const dashMatch = str.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
+            if (dashMatch) {
+                const [, dd, mm, yyyy] = dashMatch;
+                return `${dd.padStart(2, "0")}/${mm.padStart(2, "0")}/${yyyy}`;
+            }
 
-    const d = new Date(str);
-    if (!isNaN(d.getTime())) {
-        const day = String(d.getDate()).padStart(2, "0");
-        const month = String(d.getMonth() + 1).padStart(2, "0");
-        const year = d.getFullYear();
-        return `${day}/${month}/${year}`;
-    }
+            const d = new Date(str);
+            if (!isNaN(d.getTime())) {
+                const day = String(d.getDate()).padStart(2, "0");
+                const month = String(d.getMonth() + 1).padStart(2, "0");
+                const year = d.getFullYear();
+                return `${day}/${month}/${year}`;
+            }
 
-    return str;
-}
+            return str;
+        }
 
         const feeNumber = parseInt(formData.registrationFee, 10) || 101;
 
@@ -469,6 +471,7 @@ function formatDateToDDMMYYYY(dateInput: string | Date | null | undefined): stri
                 address: formData.address || "",
                 paymentMethod: formData.paymentMethod || "रोख",
                 paymentScreenshot: paymentScreenshot || null,
+                referredBy: formData.referredBy || req.body.referredBy || null,
                 mainMembers: {
                     create: mainMembers.map((m: { srNo: number; memberNo: string; fullName: string; mobileNo: string; prabhagNo: string }) => ({
                         srNo: m.srNo,
@@ -515,6 +518,148 @@ function formatDateToDDMMYYYY(dateInput: string | Date | null | undefined): stri
             success: false,
             error: "डेटाबेस सर्व्हर त्रुटी: " + (error.message || "अनपेक्षित त्रुटी"),
         });
+    }
+});
+
+import fs from "fs";
+import path from "path";
+
+// Managed Users Data Structure & Disk Persistence
+interface ManagedUser {
+    id: string;
+    email: string;
+    name?: string;
+    phone?: string;
+    date: string;
+    time: string;
+    status: string;
+    role: string;
+    createdAt: string;
+}
+
+const USERS_FILE_PATH = path.join(__dirname, "managed_users.json");
+
+const loadManagedUsers = (): ManagedUser[] => {
+    try {
+        if (fs.existsSync(USERS_FILE_PATH)) {
+            const data = fs.readFileSync(USERS_FILE_PATH, "utf-8");
+            const parsed = JSON.parse(data);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+                return parsed;
+            }
+        }
+    } catch (e) {
+        console.error("Failed to load managed_users.json:", e);
+    }
+    return [
+        {
+            id: "usr_default_1",
+            email: "admin@mptmamravati.org",
+            name: "प्रशासक (Admin)",
+            phone: "9876543210",
+            date: "21/08/2026",
+            time: "10:00 AM",
+            status: "VERIFIED",
+            role: "Super Admin",
+            createdAt: new Date().toISOString(),
+        },
+        {
+            id: "usr_default_2",
+            email: "sdsumit6446@gmail.com",
+            name: "Sumit Dhole",
+            phone: "8459073887",
+            date: "21/08/2026",
+            time: "10:54 AM",
+            status: "VERIFIED",
+            role: "User",
+            createdAt: new Date().toISOString(),
+        },
+        {
+            id: "usr_default_3",
+            email: "ybhatkar701@gmail.com",
+            name: "Yuvraj Bhatkar",
+            phone: "8766735625",
+            date: "21/08/2026",
+            time: "02:57 PM",
+            status: "VERIFIED",
+            role: "User",
+            createdAt: new Date().toISOString(),
+        },
+    ];
+};
+
+let managedUsersStore: ManagedUser[] = loadManagedUsers();
+
+const saveManagedUsers = () => {
+    try {
+        fs.writeFileSync(USERS_FILE_PATH, JSON.stringify(managedUsersStore, null, 2), "utf-8");
+    } catch (e) {
+        console.error("Failed to save managed_users.json:", e);
+    }
+};
+
+// Save initial store to disk if not exists
+saveManagedUsers();
+
+// Helper to check if an email is registered by Super Admin
+const isEmailRegisteredInBackend = (email: string): boolean => {
+    const clean = email.trim().toLowerCase();
+    if (clean === "mptmamravati.org" || clean === "admin@mptmamravati.org") return true;
+    return managedUsersStore.some((u) => u.email.trim().toLowerCase() === clean);
+};
+
+// GET /api/users - Get all managed users
+app.get("/api/users", (req: Request, res: Response) => {
+    res.json({ success: true, data: managedUsersStore });
+});
+
+// POST /api/users - Add or update a managed user
+app.post("/api/users", (req: Request, res: Response) => {
+    const { email, name, phone, date, time, status, role, id } = req.body;
+    if (!email) {
+        res.status(400).json({ success: false, error: "इमेल आयडी आवश्यक आहे!" });
+        return;
+    }
+    const cleanEmail = email.trim().toLowerCase();
+    const existingIndex = managedUsersStore.findIndex((u) => u.email.trim().toLowerCase() === cleanEmail);
+
+    const now = new Date();
+    const newUser: ManagedUser = {
+        id: id || `usr_${Date.now()}`,
+        email: cleanEmail,
+        name: name || "",
+        phone: phone || "",
+        date: date || now.toLocaleDateString("en-GB"),
+        time: time || now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true }),
+        status: status || "VERIFIED",
+        role: role || "User",
+        createdAt: now.toISOString(),
+    };
+
+    if (existingIndex >= 0) {
+        managedUsersStore[existingIndex] = { ...managedUsersStore[existingIndex], ...newUser };
+    } else {
+        managedUsersStore.unshift(newUser);
+    }
+
+    saveManagedUsers();
+
+    res.json({ success: true, data: newUser, users: managedUsersStore });
+});
+
+// DELETE /api/users/:id - Delete managed user by ID or Email
+app.delete("/api/users/:id", (req: Request, res: Response) => {
+    const targetId = String(req.params.id).trim().toLowerCase();
+    const index = managedUsersStore.findIndex(
+        (u) => u.id === targetId || u.email.trim().toLowerCase() === targetId
+    );
+
+    if (index >= 0) {
+        const deleted = managedUsersStore.splice(index, 1);
+        saveManagedUsers();
+        res.json({ success: true, message: "युझर हटवला गेला", deleted: deleted[0] });
+    } else {
+        res.status(404).json({ success: false, error: "युझर सापडला नाही" });
     }
 });
 
@@ -570,7 +715,7 @@ const createMailTransporter = async () => {
 // POST /api/users/send-verification - Send OTP to user email
 app.post("/api/users/send-verification", async (req: Request, res: Response) => {
     try {
-        const { email } = req.body;
+        const { email, isRegistration } = req.body;
         if (!email || typeof email !== "string" || !email.includes("@")) {
             res.status(400).json({
                 success: false,
@@ -580,6 +725,28 @@ app.post("/api/users/send-verification", async (req: Request, res: Response) => 
         }
 
         const cleanEmail = email.trim().toLowerCase();
+
+        if (isRegistration) {
+            // Super Admin adding a new user from Manage Users page
+            const isAlreadyAdded = managedUsersStore.some((u) => u.email.trim().toLowerCase() === cleanEmail);
+            if (isAlreadyAdded) {
+                res.status(400).json({
+                    success: false,
+                    error: "⚠️ हा इमेल आयडी आधीच नोंदणीकृत व जोडलेला आहे!",
+                });
+                return;
+            }
+        } else {
+            // User Login flow: Check if email is registered by Super Admin
+            if (!isEmailRegisteredInBackend(cleanEmail)) {
+                res.status(400).json({
+                    success: false,
+                    error: "⚠️ हा इमेल आयडी नोंदणीकृत नाही! पडताळणी कोड (OTP) फक्त मुख्य प्रशासकाने (Super Admin) जोडलेल्या इमेलवरच पाठवला जाऊ शकतो.",
+                });
+                return;
+            }
+        }
+
         const code = String(Math.floor(100000 + Math.random() * 900000));
         const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes
 

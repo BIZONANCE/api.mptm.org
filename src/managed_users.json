@@ -1,0 +1,46 @@
+[
+  {
+    "id": "usr_1787304942156",
+    "email": "sumitdhole8474@gmail.com",
+    "name": "sd",
+    "phone": "4376546563",
+    "date": "21/08/2026",
+    "time": "03:05 PM",
+    "status": "VERIFIED",
+    "role": "User",
+    "createdAt": "2026-08-21T09:35:48.751Z"
+  },
+  {
+    "id": "usr_default_1",
+    "email": "admin@mptmamravati.org",
+    "name": "प्रशासक (Admin)",
+    "phone": "9876543210",
+    "date": "21/08/2026",
+    "time": "10:00 AM",
+    "status": "VERIFIED",
+    "role": "Super Admin",
+    "createdAt": "2026-08-21T09:34:42.159Z"
+  },
+  {
+    "id": "usr_default_2",
+    "email": "sdsumit6446@gmail.com",
+    "name": "Sumit Dhole",
+    "phone": "8459073887",
+    "date": "21/08/2026",
+    "time": "10:54 AM",
+    "status": "VERIFIED",
+    "role": "User",
+    "createdAt": "2026-08-21T09:34:42.160Z"
+  },
+  {
+    "id": "usr_default_3",
+    "email": "ybhatkar701@gmail.com",
+    "name": "Yuvraj Bhatkar",
+    "phone": "8766735625",
+    "date": "21/08/2026",
+    "time": "02:57 PM",
+    "status": "VERIFIED",
+    "role": "User",
+    "createdAt": "2026-08-21T09:34:42.160Z"
+  }
+]
