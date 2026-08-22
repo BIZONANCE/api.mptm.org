@@ -622,24 +622,28 @@ app.post("/api/users", (req: Request, res: Response) => {
         return;
     }
     const cleanEmail = email.trim().toLowerCase();
-    const existingIndex = managedUsersStore.findIndex((u) => u.email.trim().toLowerCase() === cleanEmail);
+    const existingIndex = managedUsersStore.findIndex(
+        (u) => u.email.trim().toLowerCase() === cleanEmail || (id && u.id === id)
+    );
 
     const now = new Date();
+    const existingUser = existingIndex >= 0 ? managedUsersStore[existingIndex] : null;
+
     const newUser: ManagedUser = {
-        id: id || `usr_${Date.now()}`,
+        id: id || (existingUser ? existingUser.id : `usr_${Date.now()}`),
         email: cleanEmail,
-        name: name || "",
-        phone: phone || "",
-        city: city || "",
-        date: date || now.toLocaleDateString("en-GB"),
-        time: time || now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true }),
-        status: status || "VERIFIED",
-        role: role || "User",
-        createdAt: now.toISOString(),
+        name: name !== undefined ? name : (existingUser ? existingUser.name || "" : ""),
+        phone: phone !== undefined ? phone : (existingUser ? existingUser.phone || "" : ""),
+        city: city !== undefined ? city : (existingUser ? existingUser.city || "" : ""),
+        date: date || (existingUser ? existingUser.date : now.toLocaleDateString("en-GB")),
+        time: time || (existingUser ? existingUser.time : now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true })),
+        status: status || (existingUser ? existingUser.status : "VERIFIED"),
+        role: role || (existingUser ? existingUser.role : "User"),
+        createdAt: (existingUser && existingUser.createdAt) ? existingUser.createdAt : now.toISOString(),
     };
 
     if (existingIndex >= 0) {
-        managedUsersStore[existingIndex] = { ...managedUsersStore[existingIndex], ...newUser };
+        managedUsersStore[existingIndex] = newUser;
     } else {
         managedUsersStore.unshift(newUser);
     }
