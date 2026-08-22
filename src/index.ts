@@ -530,8 +530,9 @@ interface ManagedUser {
     email: string;
     name?: string;
     phone?: string;
+    city?: string;
     date: string;
-    time: string;
+    time?: string;
     status: string;
     role: string;
     createdAt: string;
@@ -615,7 +616,7 @@ app.get("/api/users", (req: Request, res: Response) => {
 
 // POST /api/users - Add or update a managed user
 app.post("/api/users", (req: Request, res: Response) => {
-    const { email, name, phone, date, time, status, role, id } = req.body;
+    const { email, name, phone, city, date, time, status, role, id } = req.body;
     if (!email) {
         res.status(400).json({ success: false, error: "इमेल आयडी आवश्यक आहे!" });
         return;
@@ -629,6 +630,7 @@ app.post("/api/users", (req: Request, res: Response) => {
         email: cleanEmail,
         name: name || "",
         phone: phone || "",
+        city: city || "",
         date: date || now.toLocaleDateString("en-GB"),
         time: time || now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true }),
         status: status || "VERIFIED",
