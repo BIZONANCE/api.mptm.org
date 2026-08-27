@@ -3,6 +3,8 @@ import cors from "cors";
 import dotenv from "dotenv";
 import bcrypt from "bcryptjs";
 import nodemailer from "nodemailer";
+import fs from "fs";
+import path from "path";
 import { prisma, withDbRetry } from "./prisma";
 
 dotenv.config();
@@ -840,6 +842,456 @@ app.post("/api/users/verify-code", (req: Request, res: Response) => {
 
     verificationStore.delete(cleanEmail);
     res.json({ success: true, verified: true, message: "इमेल यशस्वीरित्या सत्यप्रमाणित झाला!" });
+});
+
+// ==========================================
+// CAREER APPLICATIONS API ENDPOINTS
+// ==========================================
+
+interface CareerAppItem {
+    id: string;
+    name: string;
+    email: string;
+    phone: string;
+    position: string;
+    message?: string;
+    resumeName?: string;
+    resumeData?: string;
+    status: "PENDING" | "REVIEWED" | "SHORTLISTED" | "REJECTED";
+    createdAt: string;
+}
+
+const CAREER_FILE_PATH = path.join(__dirname, "../career_applications.json");
+
+const loadCareerAppsFromFile = (): CareerAppItem[] => {
+    try {
+        if (fs.existsSync(CAREER_FILE_PATH)) {
+            const raw = fs.readFileSync(CAREER_FILE_PATH, "utf-8");
+            return JSON.parse(raw);
+        }
+    } catch (e) {
+        console.error("Error reading career applications file:", e);
+    }
+    const defaultApps: CareerAppItem[] = [
+        {
+            id: "career_101",
+            name: "Ravindra Shamrao Deshmukh",
+            email: "ravindra.deshmukh@gmail.com",
+            phone: "9823456789",
+            position: "Office Assistant",
+            message: "I have 3 years of experience in computer operations and data entry. Eager to work with MPTM.",
+            resumeName: "Ravindra_Deshmukh_Resume.pdf",
+            status: "PENDING",
+            createdAt: new Date(Date.now() - 3600000 * 24 * 1).toISOString(),
+        },
+        {
+            id: "career_102",
+            name: "Supriya Vijay Tambade",
+            email: "supriya.tambade@gmail.com",
+            phone: "9876543210",
+            position: "Office Assistant",
+            message: "Completed MS-CIT certification. Computer typing speed is 40 WPM.",
+            resumeName: "Supriya_Tambade_CV.pdf",
+            status: "SHORTLISTED",
+            createdAt: new Date(Date.now() - 3600000 * 24 * 3).toISOString(),
+        },
+        {
+            id: "career_103",
+            name: "Amit Gajanan Kale",
+            email: "amit.kale99@yahoo.com",
+            phone: "9422114455",
+            position: "Office Assistant",
+            message: "2 years of administrative experience and office operations.",
+            resumeName: "Amit_Kale_Resume.pdf",
+            status: "REVIEWED",
+            createdAt: new Date(Date.now() - 3600000 * 24 * 6).toISOString(),
+        }
+    ];
+    try {
+        fs.writeFileSync(CAREER_FILE_PATH, JSON.stringify(defaultApps, null, 2), "utf-8");
+    } catch (e) {}
+    return defaultApps;
+};
+
+const saveCareerAppsToFile = (apps: CareerAppItem[]) => {
+    try {
+        fs.writeFileSync(CAREER_FILE_PATH, JSON.stringify(apps, null, 2), "utf-8");
+    } catch (e) {
+        console.error("Error writing career applications file:", e);
+    }
+};
+
+let careerAppsStore: CareerAppItem[] = loadCareerAppsFromFile();
+
+// POST /api/career/apply - Submit job application from frontend
+app.post("/api/career/apply", (req: Request, res: Response) => {
+    try {
+        const { name, email, phone, message, resumeName, resumeData, position } = req.body;
+
+        if (!name || !email || !phone) {
+            res.status(400).json({
+                success: false,
+                error: "Name, email, and 10-digit phone number are required!",
+            });
+            return;
+        }
+
+        const cleanPhone = String(phone).replace(/\D/g, "").slice(0, 10);
+        if (cleanPhone.length !== 10) {
+            res.status(400).json({
+                success: false,
+                error: "Please enter a valid 10-digit phone number!",
+            });
+            return;
+        }
+
+        const newApp: CareerAppItem = {
+            id: `career_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+            name: String(name).trim(),
+            email: String(email).trim().toLowerCase(),
+            phone: cleanPhone,
+            position: position || "Office Assistant",
+            message: message ? String(message).trim() : "",
+            resumeName: resumeName || "Resume.pdf",
+            resumeData: resumeData || undefined,
+            status: "PENDING",
+            createdAt: new Date().toISOString(),
+        };
+
+        careerAppsStore.unshift(newApp);
+        saveCareerAppsToFile(careerAppsStore);
+
+        res.json({
+            success: true,
+            message: "Your application has been submitted successfully!",
+            data: newApp,
+        });
+    } catch (err: any) {
+        console.error("Career apply error:", err);
+        res.status(500).json({ success: false, error: err.message || "Server error while submitting application." });
+    }
+});
+
+// GET /api/career/applications - Get all career applications for Super Admin Dashboard
+app.get("/api/career/applications", (req: Request, res: Response) => {
+    try {
+        res.json({
+            success: true,
+            count: careerAppsStore.length,
+            data: careerAppsStore,
+        });
+    } catch (err: any) {
+        console.error("Get career apps error:", err);
+        res.status(500).json({ success: false, error: err.message || "Server error" });
+    }
+});
+
+// PUT /api/career/applications/:id - Update career application status
+app.put("/api/career/applications/:id", (req: Request, res: Response) => {
+    try {
+        const { id } = req.params;
+        const { status } = req.body;
+
+        const target = careerAppsStore.find((a) => a.id === id);
+        if (!target) {
+            res.status(404).json({ success: false, error: "Application not found!" });
+            return;
+        }
+
+        if (status) {
+            target.status = status;
+        }
+
+        saveCareerAppsToFile(careerAppsStore);
+
+        res.json({
+            success: true,
+            message: "Application status updated successfully",
+            data: target,
+        });
+    } catch (err: any) {
+        console.error("Update career status error:", err);
+        res.status(500).json({ success: false, error: err.message || "Server error" });
+    }
+});
+
+// DELETE /api/career/applications/:id - Delete career application
+app.delete("/api/career/applications/:id", (req: Request, res: Response) => {
+    try {
+        const { id } = req.params;
+        const index = careerAppsStore.findIndex((a) => a.id === id);
+        if (index === -1) {
+            res.status(404).json({ success: false, error: "Application not found!" });
+            return;
+        }
+
+        const deleted = careerAppsStore.splice(index, 1)[0];
+        saveCareerAppsToFile(careerAppsStore);
+
+        res.json({
+            success: true,
+            message: "Application deleted successfully",
+            data: deleted,
+        });
+    } catch (err: any) {
+        console.error("Delete career app error:", err);
+        res.status(500).json({ success: false, error: err.message || "Server error" });
+    }
+});
+
+// ==========================================
+// CONTACT MANAGEMENT API ENDPOINTS
+// ==========================================
+
+interface ContactInfoData {
+    address: string;
+    phone: string;
+    email: string;
+    hours: string;
+}
+
+interface ContactMessageItem {
+    id: string;
+    name: string;
+    email: string;
+    phone: string;
+    subject?: string;
+    message: string;
+    status: "UNREAD" | "READ";
+    createdAt: string;
+}
+
+const CONTACT_INFO_FILE = path.join(__dirname, "../contact_info.json");
+const CONTACT_MESSAGES_FILE = path.join(__dirname, "../contact_messages.json");
+
+const defaultContactInfo: ContactInfoData = {
+    address: "Maharashtra Prantik Tailik Mahasabha, Amravati Division, Amravati, Maharashtra, India",
+    phone: "9876543210",
+    email: "info@mptmamravati.org",
+    hours: "Monday - Saturday: 10:00 AM - 6:00 PM",
+};
+
+const loadContactInfo = (): ContactInfoData => {
+    try {
+        if (fs.existsSync(CONTACT_INFO_FILE)) {
+            const raw = fs.readFileSync(CONTACT_INFO_FILE, "utf-8");
+            return JSON.parse(raw);
+        }
+    } catch (e) {
+        console.error("Error reading contact info file:", e);
+    }
+    try {
+        fs.writeFileSync(CONTACT_INFO_FILE, JSON.stringify(defaultContactInfo, null, 2), "utf-8");
+    } catch (e) {}
+    return defaultContactInfo;
+};
+
+const saveContactInfo = (info: ContactInfoData) => {
+    try {
+        fs.writeFileSync(CONTACT_INFO_FILE, JSON.stringify(info, null, 2), "utf-8");
+    } catch (e) {
+        console.error("Error saving contact info file:", e);
+    }
+};
+
+let contactInfoStore: ContactInfoData = loadContactInfo();
+
+const defaultContactMessages: ContactMessageItem[] = [
+    {
+        id: "msg_101",
+        name: "Suresh Deshmukh",
+        email: "suresh.deshmukh@gmail.com",
+        phone: "9822334455",
+        subject: "Membership Inquiry",
+        message: "I want to register for lifetime membership of MPTM Amravati. Please guide me.",
+        status: "UNREAD",
+        createdAt: new Date(Date.now() - 3600000 * 12).toISOString(),
+    },
+    {
+        id: "msg_102",
+        name: "Pooja Patil",
+        email: "pooja.patil@gmail.com",
+        phone: "9876543210",
+        subject: "Event Details Request",
+        message: "Can you provide the schedule for the upcoming divisional conference?",
+        status: "READ",
+        createdAt: new Date(Date.now() - 3600000 * 48).toISOString(),
+    }
+];
+
+const loadContactMessages = (): ContactMessageItem[] => {
+    try {
+        if (fs.existsSync(CONTACT_MESSAGES_FILE)) {
+            const raw = fs.readFileSync(CONTACT_MESSAGES_FILE, "utf-8");
+            return JSON.parse(raw);
+        }
+    } catch (e) {
+        console.error("Error reading contact messages file:", e);
+    }
+    try {
+        fs.writeFileSync(CONTACT_MESSAGES_FILE, JSON.stringify(defaultContactMessages, null, 2), "utf-8");
+    } catch (e) {}
+    return defaultContactMessages;
+};
+
+const saveContactMessages = (msgs: ContactMessageItem[]) => {
+    try {
+        fs.writeFileSync(CONTACT_MESSAGES_FILE, JSON.stringify(msgs, null, 2), "utf-8");
+    } catch (e) {
+        console.error("Error saving contact messages file:", e);
+    }
+};
+
+let contactMessagesStore: ContactMessageItem[] = loadContactMessages();
+
+// GET /api/contact/info - Get current editable contact information
+app.get("/api/contact/info", (req: Request, res: Response) => {
+    try {
+        res.json({
+            success: true,
+            data: contactInfoStore,
+        });
+    } catch (err: any) {
+        console.error("Get contact info error:", err);
+        res.status(500).json({ success: false, error: err.message || "Server error" });
+    }
+});
+
+// PUT /api/contact/info - Update contact information from Super Admin Dashboard
+app.put("/api/contact/info", (req: Request, res: Response) => {
+    try {
+        const { address, phone, email, hours } = req.body;
+        contactInfoStore = {
+            address: address !== undefined ? String(address).trim() : contactInfoStore.address,
+            phone: phone !== undefined ? String(phone).replace(/\D/g, "").slice(0, 10) : contactInfoStore.phone,
+            email: email !== undefined ? String(email).trim().toLowerCase() : contactInfoStore.email,
+            hours: hours !== undefined ? String(hours).trim() : contactInfoStore.hours,
+        };
+        saveContactInfo(contactInfoStore);
+
+        res.json({
+            success: true,
+            message: "Contact information updated successfully!",
+            data: contactInfoStore,
+        });
+    } catch (err: any) {
+        console.error("Update contact info error:", err);
+        res.status(500).json({ success: false, error: err.message || "Server error" });
+    }
+});
+
+// POST /api/contact/submit - Submit contact inquiry from website
+app.post("/api/contact/submit", (req: Request, res: Response) => {
+    try {
+        const { name, email, phone, subject, message } = req.body;
+
+        if (!name || !email || !phone || !message) {
+            res.status(400).json({
+                success: false,
+                error: "Name, email, 10-digit phone number, and message are required!",
+            });
+            return;
+        }
+
+        const cleanPhone = String(phone).replace(/\D/g, "").slice(0, 10);
+        if (cleanPhone.length !== 10) {
+            res.status(400).json({
+                success: false,
+                error: "Please enter a valid 10-digit mobile number!",
+            });
+            return;
+        }
+
+        const newMsg: ContactMessageItem = {
+            id: `msg_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+            name: String(name).trim(),
+            email: String(email).trim().toLowerCase(),
+            phone: cleanPhone,
+            subject: subject ? String(subject).trim() : "General Inquiry",
+            message: String(message).trim(),
+            status: "UNREAD",
+            createdAt: new Date().toISOString(),
+        };
+
+        contactMessagesStore.unshift(newMsg);
+        saveContactMessages(contactMessagesStore);
+
+        res.json({
+            success: true,
+            message: "Your message has been submitted successfully!",
+            data: newMsg,
+        });
+    } catch (err: any) {
+        console.error("Contact submit error:", err);
+        res.status(500).json({ success: false, error: err.message || "Server error submitting message." });
+    }
+});
+
+// GET /api/contact/messages - Get all contact messages for Super Admin Dashboard
+app.get("/api/contact/messages", (req: Request, res: Response) => {
+    try {
+        res.json({
+            success: true,
+            count: contactMessagesStore.length,
+            data: contactMessagesStore,
+        });
+    } catch (err: any) {
+        console.error("Get contact messages error:", err);
+        res.status(500).json({ success: false, error: err.message || "Server error" });
+    }
+});
+
+// PUT /api/contact/messages/:id - Update message status
+app.put("/api/contact/messages/:id", (req: Request, res: Response) => {
+    try {
+        const { id } = req.params;
+        const { status } = req.body;
+
+        const target = contactMessagesStore.find((m) => m.id === id);
+        if (!target) {
+            res.status(404).json({ success: false, error: "Message not found!" });
+            return;
+        }
+
+        if (status) {
+            target.status = status;
+        }
+
+        saveContactMessages(contactMessagesStore);
+
+        res.json({
+            success: true,
+            message: "Message status updated successfully",
+            data: target,
+        });
+    } catch (err: any) {
+        console.error("Update message status error:", err);
+        res.status(500).json({ success: false, error: err.message || "Server error" });
+    }
+});
+
+// DELETE /api/contact/messages/:id - Delete message
+app.delete("/api/contact/messages/:id", (req: Request, res: Response) => {
+    try {
+        const { id } = req.params;
+        const index = contactMessagesStore.findIndex((m) => m.id === id);
+        if (index === -1) {
+            res.status(404).json({ success: false, error: "Message not found!" });
+            return;
+        }
+
+        const deleted = contactMessagesStore.splice(index, 1)[0];
+        saveContactMessages(contactMessagesStore);
+
+        res.json({
+            success: true,
+            message: "Message deleted successfully",
+            data: deleted,
+        });
+    } catch (err: any) {
+        console.error("Delete contact message error:", err);
+        res.status(500).json({ success: false, error: err.message || "Server error" });
+    }
 });
 
 if (process.env.NODE_ENV !== "production" || !process.env.VERCEL) {

@@ -1,0 +1,22 @@
+[
+  {
+    "id": "msg_101",
+    "name": "Suresh Deshmukh",
+    "email": "suresh.deshmukh@gmail.com",
+    "phone": "9822334455",
+    "subject": "Membership Inquiry",
+    "message": "I want to register for lifetime membership of MPTM Amravati. Please guide me.",
+    "status": "READ",
+    "createdAt": "2026-08-26T21:26:11.144Z"
+  },
+  {
+    "id": "msg_102",
+    "name": "Pooja Patil",
+    "email": "pooja.patil@gmail.com",
+    "phone": "9876543210",
+    "subject": "Event Details Request",
+    "message": "Can you provide the schedule for the upcoming divisional conference?",
+    "status": "UNREAD",
+    "createdAt": "2026-08-25T09:26:11.145Z"
+  }
+]

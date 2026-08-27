@@ -1,0 +1,35 @@
+[
+  {
+    "id": "career_101",
+    "name": "Ravindra Shamrao Deshmukh",
+    "email": "ravindra.deshmukh@gmail.com",
+    "phone": "9823456789",
+    "position": "Office Assistant",
+    "message": "I have 3 years of experience in computer operations and data entry. Eager to work with MPTM.",
+    "resumeName": "Ravindra_Deshmukh_Resume.pdf",
+    "status": "PENDING",
+    "createdAt": "2026-08-26T09:00:45.476Z"
+  },
+  {
+    "id": "career_102",
+    "name": "Supriya Vijay Tambade",
+    "email": "supriya.tambade@gmail.com",
+    "phone": "9876543210",
+    "position": "Office Assistant",
+    "message": "Completed MS-CIT certification. Computer typing speed is 40 WPM.",
+    "resumeName": "Supriya_Tambade_CV.pdf",
+    "status": "SHORTLISTED",
+    "createdAt": "2026-08-24T09:00:45.479Z"
+  },
+  {
+    "id": "career_103",
+    "name": "Amit Gajanan Kale",
+    "email": "amit.kale99@yahoo.com",
+    "phone": "9422114455",
+    "position": "Office Assistant",
+    "message": "2 years of administrative experience and office operations.",
+    "resumeName": "Amit_Kale_Resume.pdf",
+    "status": "REVIEWED",
+    "createdAt": "2026-08-21T09:00:45.479Z"
+  }
+]
