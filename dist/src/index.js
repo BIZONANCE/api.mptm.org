@@ -7,24 +7,146 @@ const express_1 = __importDefault(require("express"));
 const cors_1 = __importDefault(require("cors"));
 const dotenv_1 = __importDefault(require("dotenv"));
 const bcryptjs_1 = __importDefault(require("bcryptjs"));
+const nodemailer_1 = __importDefault(require("nodemailer"));
+const fs_1 = __importDefault(require("fs"));
+const path_1 = __importDefault(require("path"));
 const prisma_1 = require("./prisma");
 dotenv_1.default.config();
 const app = (0, express_1.default)();
 const PORT = process.env.PORT || 5000;
-// Enable CORS for frontend
-app.use((0, cors_1.default)({
+// Strict CORS Configuration
+const corsOptions = {
     origin: (origin, callback) => {
-        if (!origin || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+        const allowedOrigins = [
+            "https://admin.mptmamravati.org",
+            "https://www.mptmamravati.org",
+            "https://mptmamravati.org",
+            "http://localhost:3001",
+            "http://localhost:3000"
+        ];
+        if (!origin || allowedOrigins.includes(origin) || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
             callback(null, true);
         }
         else {
-            callback(null, true);
+            callback(new Error('Not allowed by CORS'));
         }
     },
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
     credentials: true,
-}));
+};
+// Enable CORS for frontend
+app.use((0, cors_1.default)(corsOptions));
+app.options("*", (0, cors_1.default)(corsOptions));
 app.use(express_1.default.json({ limit: "50mb" }));
 app.use(express_1.default.urlencoded({ extended: true, limit: "50mb" }));
+// Helper function to delete registration entry cleanly with manual cascade fallback
+const deleteRegistrationByIdOrReceipt = async (identifier) => {
+    return (0, prisma_1.withDbRetry)(async () => {
+        // 1. Find target registration by ID or receiptNo
+        const target = await prisma_1.prisma.memberRegistration.findFirst({
+            where: {
+                OR: [
+                    { id: identifier },
+                    { receiptNo: identifier }
+                ]
+            }
+        });
+        if (!target) {
+            return null;
+        }
+        const regId = target.id;
+        // Use transaction to delete family members, main members, and registration
+        const [deletedFamily, deletedMain, deletedReg] = await prisma_1.prisma.$transaction([
+            prisma_1.prisma.familyMember.deleteMany({ where: { registrationId: regId } }),
+            prisma_1.prisma.mainMember.deleteMany({ where: { registrationId: regId } }),
+            prisma_1.prisma.memberRegistration.delete({ where: { id: regId } })
+        ]);
+        return {
+            registration: deletedReg,
+            mainCount: deletedMain.count,
+            familyCount: deletedFamily.count
+        };
+    });
+};
+// DELETE /api/register/:id - Delete registration entry by ID
+app.delete("/api/register/:id", async (req, res) => {
+    try {
+        const identifier = String(req.params.id);
+        const result = await deleteRegistrationByIdOrReceipt(identifier);
+        if (!result) {
+            res.status(404).json({
+                success: false,
+                error: "हा नोंदणी अर्ज सापडला नाही किंवा आधीच हटवला आहे!",
+            });
+            return;
+        }
+        res.json({
+            success: true,
+            message: "नोंदणी अर्ज यशस्वीरित्या डेटाबेसमधून हटवला गेला",
+            data: result.registration,
+        });
+    }
+    catch (error) {
+        console.error("Delete Registration Error:", error);
+        res.status(500).json({
+            success: false,
+            error: "डेटाबेस सर्व्हर त्रुटी: " + (error.message || "हटवताना अनपेक्षित त्रुटी झाली"),
+        });
+    }
+});
+// POST /api/register/delete/:id - Fallback route for POST method deletion
+app.post("/api/register/delete/:id", async (req, res) => {
+    try {
+        const identifier = String(req.params.id);
+        const result = await deleteRegistrationByIdOrReceipt(identifier);
+        if (!result) {
+            res.status(404).json({
+                success: false,
+                error: "हा नोंदणी अर्ज सापडला नाही किंवा आधीच हटवला आहे!",
+            });
+            return;
+        }
+        res.json({
+            success: true,
+            message: "नोंदणी अर्ज यशस्वीरित्या डेटाबेसमधून हटवला गेला",
+            data: result.registration,
+        });
+    }
+    catch (error) {
+        console.error("Delete Registration Error:", error);
+        res.status(500).json({
+            success: false,
+            error: "डेटाबेस सर्व्हर त्रुटी: " + (error.message || "हटवताना अनपेक्षित त्रुटी झाली"),
+        });
+    }
+});
+// DELETE /api/registrations/:id - Alternative deletion endpoint
+app.delete("/api/registrations/:id", async (req, res) => {
+    try {
+        const identifier = String(req.params.id);
+        const result = await deleteRegistrationByIdOrReceipt(identifier);
+        if (!result) {
+            res.status(404).json({
+                success: false,
+                error: "हा नोंदणी अर्ज सापडला नाही किंवा आधीच हटवला आहे!",
+            });
+            return;
+        }
+        res.json({
+            success: true,
+            message: "नोंदणी अर्ज यशस्वीरित्या डेटाबेसमधून हटवला गेला",
+            data: result.registration,
+        });
+    }
+    catch (error) {
+        console.error("Delete Registration Error:", error);
+        res.status(500).json({
+            success: false,
+            error: "डेटाबेस सर्व्हर त्रुटी: " + (error.message || "हटवताना अनपेक्षित त्रुटी झाली"),
+        });
+    }
+});
 // Root Route
 app.get("/", (_req, res) => {
     res.json({
@@ -138,12 +260,49 @@ app.post("/api/admin/login", async (req, res) => {
 // GET /api/next-numbers - Generate next unique sequence numbers for receipt and member
 app.get("/api/next-numbers", async (_req, res) => {
     try {
-        const totalRegistrations = await prisma_1.prisma.memberRegistration.count();
-        const totalMainMembers = await prisma_1.prisma.mainMember.count();
-        const nextReceiptSeq = totalRegistrations + 1;
-        const nextMemberSeq = totalMainMembers + 1;
-        const nextReceiptNo = `MPTM${String(nextReceiptSeq).padStart(3, "0")}`;
-        const nextMemberNo = `AVA${String(nextMemberSeq).padStart(3, "0")}`;
+        const currentYear = new Date().getFullYear();
+        const yearReceiptPrefix = `MPTM-${currentYear}-AMT-R`;
+        const yearMemberPrefix = `MPTM-${currentYear}-AMT-S`;
+        // Find existing registrations for current year prefix
+        const yearRegistrations = await prisma_1.prisma.memberRegistration.findMany({
+            where: {
+                receiptNo: {
+                    startsWith: yearReceiptPrefix,
+                },
+            },
+            select: { receiptNo: true },
+        });
+        // Find existing main members for current year prefix
+        const yearMainMembers = await prisma_1.prisma.mainMember.findMany({
+            where: {
+                memberNo: {
+                    startsWith: yearMemberPrefix,
+                },
+            },
+            select: { memberNo: true },
+        });
+        // Calculate next receipt sequence for current year
+        let maxReceiptSeq = 0;
+        for (const reg of yearRegistrations) {
+            const numPart = reg.receiptNo.replace(yearReceiptPrefix, "");
+            const seq = parseInt(numPart, 10);
+            if (!isNaN(seq) && seq > maxReceiptSeq) {
+                maxReceiptSeq = seq;
+            }
+        }
+        const nextReceiptSeq = Math.max(yearRegistrations.length, maxReceiptSeq) + 1;
+        // Calculate next member sequence for current year
+        let maxMemberSeq = 0;
+        for (const mem of yearMainMembers) {
+            const numPart = mem.memberNo.replace(yearMemberPrefix, "");
+            const seq = parseInt(numPart, 10);
+            if (!isNaN(seq) && seq > maxMemberSeq) {
+                maxMemberSeq = seq;
+            }
+        }
+        const nextMemberSeq = Math.max(yearMainMembers.length, maxMemberSeq) + 1;
+        const nextReceiptNo = `${yearReceiptPrefix}${String(nextReceiptSeq).padStart(3, "0")}`;
+        const nextMemberNo = `${yearMemberPrefix}${String(nextMemberSeq).padStart(3, "0")}`;
         res.json({
             success: true,
             receiptNo: nextReceiptNo,
@@ -154,12 +313,13 @@ app.get("/api/next-numbers", async (_req, res) => {
     }
     catch (error) {
         console.error("Next numbers error:", error);
+        const currentYear = new Date().getFullYear();
         res.json({
             success: true,
-            receiptNo: "MPTM001",
+            receiptNo: `MPTM-${currentYear}-AMT-R001`,
             nextReceiptSeq: 1,
             nextMemberSeq: 1,
-            nextMemberNo: "AVA001",
+            nextMemberNo: `MPTM-${currentYear}-AMT-S001`,
         });
     }
 });
@@ -204,16 +364,77 @@ app.post("/api/register", async (req, res) => {
             });
             return;
         }
-        const feeNumber = parseInt(formData.registrationFee, 10) || 101;
+        // Duplicate Validation Check for Main Member Mobile Number or Full Name
+        for (const m of mainMembers) {
+            if (m.mobileNo && m.mobileNo.trim().length === 10) {
+                const existingMember = await prisma_1.prisma.mainMember.findFirst({
+                    where: {
+                        OR: [
+                            { mobileNo: m.mobileNo.trim() },
+                            { fullName: m.fullName.trim() }
+                        ]
+                    },
+                    include: {
+                        registration: true
+                    }
+                });
+                if (existingMember) {
+                    res.status(400).json({
+                        success: false,
+                        error: `हा मोबाईल क्रमांक (${m.mobileNo}) किंवा नाव (${m.fullName}) आधीच नोंदणीकृत आहे! (पावती क्र: ${existingMember.registration?.receiptNo || 'अस्तित्वात आहे'}). हा डेटा आधीच अस्तित्वात आहे!`,
+                    });
+                    return;
+                }
+            }
+        }
+        function formatDateToDDMMYYYY(dateInput) {
+            if (!dateInput)
+                return "";
+            if (dateInput instanceof Date) {
+                if (isNaN(dateInput.getTime()))
+                    return "";
+                const day = String(dateInput.getDate()).padStart(2, "0");
+                const month = String(dateInput.getMonth() + 1).padStart(2, "0");
+                const year = dateInput.getFullYear();
+                return `${day}/${month}/${year}`;
+            }
+            const str = String(dateInput).trim();
+            if (!str)
+                return "";
+            if (/^\d{2}\/\d{2}\/\d{4}$/.test(str)) {
+                return str;
+            }
+            const isoMatch = str.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+            if (isoMatch) {
+                const [, yyyy, mm, dd] = isoMatch;
+                return `${dd.padStart(2, "0")}/${mm.padStart(2, "0")}/${yyyy}`;
+            }
+            const dashMatch = str.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
+            if (dashMatch) {
+                const [, dd, mm, yyyy] = dashMatch;
+                return `${dd.padStart(2, "0")}/${mm.padStart(2, "0")}/${yyyy}`;
+            }
+            const d = new Date(str);
+            if (!isNaN(d.getTime())) {
+                const day = String(d.getDate()).padStart(2, "0");
+                const month = String(d.getMonth() + 1).padStart(2, "0");
+                const year = d.getFullYear();
+                return `${day}/${month}/${year}`;
+            }
+            return str;
+        }
+        const parsedFee = parseInt(formData.registrationFee, 10);
+        const feeNumber = isNaN(parsedFee) || parsedFee < 101 ? 101 : parsedFee;
         const registration = await prisma_1.prisma.memberRegistration.create({
             data: {
                 receiptNo: formData.receiptNo,
-                date: formData.date,
+                date: formatDateToDDMMYYYY(formData.date),
                 registrationFee: feeNumber,
                 amountInWords: formData.amountInWords || "",
                 address: formData.address || "",
                 paymentMethod: formData.paymentMethod || "रोख",
                 paymentScreenshot: paymentScreenshot || null,
+                referredBy: formData.referredBy || req.body.referredBy || null,
                 mainMembers: {
                     create: mainMembers.map((m) => ({
                         srNo: m.srNo,
@@ -230,7 +451,7 @@ app.post("/api/register", async (req, res) => {
                         srNo: f.srNo,
                         name: f.name || "",
                         relation: f.relation || "",
-                        dob: f.dob || "",
+                        dob: formatDateToDDMMYYYY(f.dob),
                         occupation: f.occupation || "",
                         mobile: f.mobile || "",
                     })),
@@ -243,7 +464,7 @@ app.post("/api/register", async (req, res) => {
         });
         res.json({
             success: true,
-            message: "सदस्य नोंदणी डेटाबेसमध्ये (Neon PostgreSQL) यशस्वीरित्या जतन झाली!",
+            message: "सदस्य नोंदणी यशस्वीरित्या जतन झाली!",
             data: registration,
         });
     }
@@ -260,6 +481,665 @@ app.post("/api/register", async (req, res) => {
             success: false,
             error: "डेटाबेस सर्व्हर त्रुटी: " + (error.message || "अनपेक्षित त्रुटी"),
         });
+    }
+});
+const USERS_FILE_PATH = path_1.default.join(__dirname, "managed_users.json");
+const loadManagedUsers = () => {
+    try {
+        if (fs_1.default.existsSync(USERS_FILE_PATH)) {
+            const data = fs_1.default.readFileSync(USERS_FILE_PATH, "utf-8");
+            const parsed = JSON.parse(data);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+                return parsed;
+            }
+        }
+    }
+    catch (e) {
+        console.error("Failed to load managed_users.json:", e);
+    }
+    return [
+        {
+            id: "usr_default_1",
+            email: "admin@mptmamravati.org",
+            name: "प्रशासक (Admin)",
+            phone: "9876543210",
+            date: "21/08/2026",
+            time: "10:00 AM",
+            status: "VERIFIED",
+            role: "Super Admin",
+            createdAt: new Date().toISOString(),
+        },
+        {
+            id: "usr_default_2",
+            email: "sdsumit6446@gmail.com",
+            name: "Sumit Dhole",
+            phone: "8459073887",
+            date: "21/08/2026",
+            time: "10:54 AM",
+            status: "VERIFIED",
+            role: "User",
+            createdAt: new Date().toISOString(),
+        },
+        {
+            id: "usr_default_3",
+            email: "ybhatkar701@gmail.com",
+            name: "Yuvraj Bhatkar",
+            phone: "8766735625",
+            date: "21/08/2026",
+            time: "02:57 PM",
+            status: "VERIFIED",
+            role: "User",
+            createdAt: new Date().toISOString(),
+        },
+    ];
+};
+let managedUsersStore = loadManagedUsers();
+const saveManagedUsers = () => {
+    try {
+        fs_1.default.writeFileSync(USERS_FILE_PATH, JSON.stringify(managedUsersStore, null, 2), "utf-8");
+    }
+    catch (e) {
+        console.error("Failed to save managed_users.json:", e);
+    }
+};
+// Save initial store to disk if not exists
+saveManagedUsers();
+// Helper to check if an email is registered by Super Admin
+const isEmailRegisteredInBackend = (email) => {
+    const clean = email.trim().toLowerCase();
+    if (clean === "mptmamravati.org" || clean === "admin@mptmamravati.org")
+        return true;
+    return managedUsersStore.some((u) => u.email.trim().toLowerCase() === clean);
+};
+// GET /api/users - Get all managed users
+app.get("/api/users", (req, res) => {
+    res.json({ success: true, data: managedUsersStore });
+});
+// POST /api/users - Add or update a managed user
+app.post("/api/users", (req, res) => {
+    const { email, name, phone, city, date, time, status, role, id } = req.body;
+    if (!email) {
+        res.status(400).json({ success: false, error: "इमेल आयडी आवश्यक आहे!" });
+        return;
+    }
+    const cleanEmail = email.trim().toLowerCase();
+    const existingIndex = managedUsersStore.findIndex((u) => u.email.trim().toLowerCase() === cleanEmail || (id && u.id === id));
+    const now = new Date();
+    const existingUser = existingIndex >= 0 ? managedUsersStore[existingIndex] : null;
+    const newUser = {
+        id: id || (existingUser ? existingUser.id : `usr_${Date.now()}`),
+        email: cleanEmail,
+        name: name !== undefined ? name : (existingUser ? existingUser.name || "" : ""),
+        phone: phone !== undefined ? phone : (existingUser ? existingUser.phone || "" : ""),
+        city: city !== undefined ? city : (existingUser ? existingUser.city || "" : ""),
+        date: date || (existingUser ? existingUser.date : now.toLocaleDateString("en-GB")),
+        time: time || (existingUser ? existingUser.time : now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true })),
+        status: status || (existingUser ? existingUser.status : "VERIFIED"),
+        role: role || (existingUser ? existingUser.role : "User"),
+        createdAt: (existingUser && existingUser.createdAt) ? existingUser.createdAt : now.toISOString(),
+    };
+    if (existingIndex >= 0) {
+        managedUsersStore[existingIndex] = newUser;
+    }
+    else {
+        managedUsersStore.unshift(newUser);
+    }
+    saveManagedUsers();
+    res.json({ success: true, data: newUser, users: managedUsersStore });
+});
+// DELETE /api/users/:id - Delete managed user by ID or Email
+app.delete("/api/users/:id", (req, res) => {
+    const targetId = String(req.params.id).trim().toLowerCase();
+    const index = managedUsersStore.findIndex((u) => u.id === targetId || u.email.trim().toLowerCase() === targetId);
+    if (index >= 0) {
+        const deleted = managedUsersStore.splice(index, 1);
+        saveManagedUsers();
+        res.json({ success: true, message: "युझर हटवला गेला", deleted: deleted[0] });
+    }
+    else {
+        res.status(404).json({ success: false, error: "युझर सापडला नाही" });
+    }
+});
+// In-memory verification code store (Email -> { code, expiresAt })
+const verificationStore = new Map();
+// Helper transporter creation (uses Gmail service or custom SMTP config)
+const createMailTransporter = async () => {
+    const rawUser = (process.env.SMTP_USER || "").trim();
+    const rawPass = (process.env.SMTP_PASS || "").replace(/\s+/g, "").trim();
+    if (rawUser && rawPass && rawUser !== "your-email@gmail.com") {
+        if (rawUser.endsWith("@gmail.com") || (process.env.SMTP_HOST || "").includes("gmail")) {
+            console.log(`📧 Initializing Gmail SMTP Transport for: ${rawUser}`);
+            return nodemailer_1.default.createTransport({
+                service: "gmail",
+                auth: {
+                    user: rawUser,
+                    pass: rawPass,
+                },
+            });
+        }
+        return nodemailer_1.default.createTransport({
+            host: process.env.SMTP_HOST || "smtp.gmail.com",
+            port: Number(process.env.SMTP_PORT) || 587,
+            secure: process.env.SMTP_SECURE === "true",
+            auth: {
+                user: rawUser,
+                pass: rawPass,
+            },
+        });
+    }
+    try {
+        const testAccount = await nodemailer_1.default.createTestAccount();
+        return nodemailer_1.default.createTransport({
+            host: "smtp.ethereal.email",
+            port: 587,
+            secure: false,
+            auth: {
+                user: testAccount.user,
+                pass: testAccount.pass,
+            },
+        });
+    }
+    catch (err) {
+        return nodemailer_1.default.createTransport({
+            jsonTransport: true
+        });
+    }
+};
+// POST /api/users/send-verification - Send OTP to user email
+app.post("/api/users/send-verification", async (req, res) => {
+    try {
+        const { email, isRegistration } = req.body;
+        if (!email || typeof email !== "string" || !email.includes("@")) {
+            res.status(400).json({
+                success: false,
+                error: "वैध इमेल आयडी आवश्यक आहे!",
+            });
+            return;
+        }
+        const cleanEmail = email.trim().toLowerCase();
+        if (isRegistration) {
+            // Super Admin adding a new user from Manage Users page
+            const isAlreadyAdded = managedUsersStore.some((u) => u.email.trim().toLowerCase() === cleanEmail);
+            if (isAlreadyAdded) {
+                res.status(400).json({
+                    success: false,
+                    error: "⚠️ हा इमेल आयडी आधीच नोंदणीकृत व जोडलेला आहे!",
+                });
+                return;
+            }
+        }
+        else {
+            // User Login flow: Check if email is registered by Super Admin
+            if (!isEmailRegisteredInBackend(cleanEmail)) {
+                res.status(400).json({
+                    success: false,
+                    error: "⚠️ हा इमेल आयडी नोंदणीकृत नाही! पडताळणी कोड (OTP) फक्त मुख्य प्रशासकाने (Super Admin) जोडलेल्या इमेलवरच पाठवला जाऊ शकतो.",
+                });
+                return;
+            }
+        }
+        const code = String(Math.floor(100000 + Math.random() * 900000));
+        const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes
+        verificationStore.set(cleanEmail, { code, expiresAt });
+        let emailSent = false;
+        let previewUrl = false;
+        try {
+            const transporter = await createMailTransporter();
+            const senderUser = (process.env.SMTP_USER || "sdhole501@gmail.com").trim();
+            const info = await transporter.sendMail({
+                from: process.env.SMTP_FROM || `"MPTM Amravati" <${senderUser}>`,
+                to: cleanEmail,
+                subject: `🔑 MPTM Amravati - तुमचा इमेल पडताळणी कोड: ${code}`,
+                html: `
+                    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
+                        <div style="background-color: #7A0C0C; color: #ffffff; padding: 16px; text-align: center; border-radius: 8px 8px 0 0;">
+                            <h2 style="margin: 0; font-size: 20px;">🚩 महाराष्ट्र प्रांतिक तैलिक महासभा</h2>
+                            <p style="margin: 4px 0 0 0; font-size: 13px; color: #FCD34D;">अमरावती विभाग, अमरावती</p>
+                        </div>
+                        <div style="padding: 24px; text-align: center;">
+                            <h3 style="color: #1e293b; margin-top: 0;">इमेल पडताळणी कोड (Email Verification Code)</h3>
+                            <p style="color: #475569; font-size: 14px;">तुमचा ६-अंकी सुरक्षित पडताळणी कोड खालीलप्रमाणे आहे:</p>
+                            <div style="background-color: #EFF6FF; border: 2px dashed #2563EB; border-radius: 12px; padding: 16px; margin: 20px 0; display: inline-block;">
+                                <span style="font-family: monospace; font-size: 32px; font-weight: bold; letter-spacing: 6px; color: #1D4ED8;">${code}</span>
+                            </div>
+                            <p style="color: #64748B; font-size: 12px; margin-top: 16px;">हा कोड पुढील १० मिनिटांसाठी वैध राहील. कृपया हा कोड कोणासोबतही शेअर करू नका.</p>
+                        </div>
+                        <div style="border-top: 1px solid #e2e8f0; padding-top: 12px; text-align: center; color: #94a3b8; font-size: 11px;">
+                            © 2026 MPTM Amravati. All rights reserved.
+                        </div>
+                    </div>
+                `,
+            });
+            console.log("✉️ Real Email Dispatch Info:", info.messageId || info);
+            previewUrl = nodemailer_1.default.getTestMessageUrl(info);
+            if (previewUrl) {
+                console.log("🔗 Preview Real Sent Email at:", previewUrl);
+            }
+            emailSent = true;
+        }
+        catch (mailErr) {
+            console.error("Nodemailer error:", mailErr);
+        }
+        res.json({
+            success: true,
+            message: `पडताळणी कोड ${cleanEmail} वर पाठवला आहे!`,
+            code,
+            emailSent,
+            previewUrl,
+        });
+    }
+    catch (err) {
+        console.error("Send verification error:", err);
+        res.status(500).json({ success: false, error: err.message || "सर्व्हर त्रुटी" });
+    }
+});
+// POST /api/users/verify-code - Verify user code
+app.post("/api/users/verify-code", (req, res) => {
+    const { email, code } = req.body;
+    if (!email || !code) {
+        res.status(400).json({ success: false, error: "इमेल व पडताळणी कोड आवश्यक आहे!" });
+        return;
+    }
+    const cleanEmail = email.trim().toLowerCase();
+    const stored = verificationStore.get(cleanEmail);
+    if (!stored) {
+        res.status(400).json({ success: false, error: "या इमेलसाठी कोणताही पडताळणी कोड सापडला नाही!" });
+        return;
+    }
+    if (Date.now() > stored.expiresAt) {
+        verificationStore.delete(cleanEmail);
+        res.status(400).json({ success: false, error: "पडताळणी कोड कालबाह्य (expired) झाला आहे. नवीन कोड मागा." });
+        return;
+    }
+    if (stored.code.trim() !== String(code).trim()) {
+        res.status(400).json({ success: false, error: "प्रविष्ट केलेला पडताळणी कोड चुकीचा आहे!" });
+        return;
+    }
+    verificationStore.delete(cleanEmail);
+    res.json({ success: true, verified: true, message: "इमेल यशस्वीरित्या सत्यप्रमाणित झाला!" });
+});
+const CAREER_FILE_PATH = path_1.default.join(__dirname, "../career_applications.json");
+const loadCareerAppsFromFile = () => {
+    try {
+        if (fs_1.default.existsSync(CAREER_FILE_PATH)) {
+            const raw = fs_1.default.readFileSync(CAREER_FILE_PATH, "utf-8");
+            return JSON.parse(raw);
+        }
+    }
+    catch (e) {
+        console.error("Error reading career applications file:", e);
+    }
+    const defaultApps = [
+        {
+            id: "career_101",
+            name: "Ravindra Shamrao Deshmukh",
+            email: "ravindra.deshmukh@gmail.com",
+            phone: "9823456789",
+            position: "Office Assistant",
+            message: "I have 3 years of experience in computer operations and data entry. Eager to work with MPTM.",
+            resumeName: "Ravindra_Deshmukh_Resume.pdf",
+            status: "PENDING",
+            createdAt: new Date(Date.now() - 3600000 * 24 * 1).toISOString(),
+        },
+        {
+            id: "career_102",
+            name: "Supriya Vijay Tambade",
+            email: "supriya.tambade@gmail.com",
+            phone: "9876543210",
+            position: "Office Assistant",
+            message: "Completed MS-CIT certification. Computer typing speed is 40 WPM.",
+            resumeName: "Supriya_Tambade_CV.pdf",
+            status: "SHORTLISTED",
+            createdAt: new Date(Date.now() - 3600000 * 24 * 3).toISOString(),
+        },
+        {
+            id: "career_103",
+            name: "Amit Gajanan Kale",
+            email: "amit.kale99@yahoo.com",
+            phone: "9422114455",
+            position: "Office Assistant",
+            message: "2 years of administrative experience and office operations.",
+            resumeName: "Amit_Kale_Resume.pdf",
+            status: "REVIEWED",
+            createdAt: new Date(Date.now() - 3600000 * 24 * 6).toISOString(),
+        }
+    ];
+    try {
+        fs_1.default.writeFileSync(CAREER_FILE_PATH, JSON.stringify(defaultApps, null, 2), "utf-8");
+    }
+    catch (e) { }
+    return defaultApps;
+};
+const saveCareerAppsToFile = (apps) => {
+    try {
+        fs_1.default.writeFileSync(CAREER_FILE_PATH, JSON.stringify(apps, null, 2), "utf-8");
+    }
+    catch (e) {
+        console.error("Error writing career applications file:", e);
+    }
+};
+let careerAppsStore = loadCareerAppsFromFile();
+// POST /api/career/apply - Submit job application from frontend
+app.post("/api/career/apply", (req, res) => {
+    try {
+        const { name, email, phone, message, resumeName, resumeData, position } = req.body;
+        if (!name || !email || !phone) {
+            res.status(400).json({
+                success: false,
+                error: "Name, email, and 10-digit phone number are required!",
+            });
+            return;
+        }
+        const cleanPhone = String(phone).replace(/\D/g, "").slice(0, 10);
+        if (cleanPhone.length !== 10) {
+            res.status(400).json({
+                success: false,
+                error: "Please enter a valid 10-digit phone number!",
+            });
+            return;
+        }
+        const newApp = {
+            id: `career_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+            name: String(name).trim(),
+            email: String(email).trim().toLowerCase(),
+            phone: cleanPhone,
+            position: position || "Office Assistant",
+            message: message ? String(message).trim() : "",
+            resumeName: resumeName || "Resume.pdf",
+            resumeData: resumeData || undefined,
+            status: "PENDING",
+            createdAt: new Date().toISOString(),
+        };
+        careerAppsStore.unshift(newApp);
+        saveCareerAppsToFile(careerAppsStore);
+        res.json({
+            success: true,
+            message: "Your application has been submitted successfully!",
+            data: newApp,
+        });
+    }
+    catch (err) {
+        console.error("Career apply error:", err);
+        res.status(500).json({ success: false, error: err.message || "Server error while submitting application." });
+    }
+});
+// GET /api/career/applications - Get all career applications for Super Admin Dashboard
+app.get("/api/career/applications", (req, res) => {
+    try {
+        res.json({
+            success: true,
+            count: careerAppsStore.length,
+            data: careerAppsStore,
+        });
+    }
+    catch (err) {
+        console.error("Get career apps error:", err);
+        res.status(500).json({ success: false, error: err.message || "Server error" });
+    }
+});
+// PUT /api/career/applications/:id - Update career application status
+app.put("/api/career/applications/:id", (req, res) => {
+    try {
+        const { id } = req.params;
+        const { status } = req.body;
+        const target = careerAppsStore.find((a) => a.id === id);
+        if (!target) {
+            res.status(404).json({ success: false, error: "Application not found!" });
+            return;
+        }
+        if (status) {
+            target.status = status;
+        }
+        saveCareerAppsToFile(careerAppsStore);
+        res.json({
+            success: true,
+            message: "Application status updated successfully",
+            data: target,
+        });
+    }
+    catch (err) {
+        console.error("Update career status error:", err);
+        res.status(500).json({ success: false, error: err.message || "Server error" });
+    }
+});
+// DELETE /api/career/applications/:id - Delete career application
+app.delete("/api/career/applications/:id", (req, res) => {
+    try {
+        const { id } = req.params;
+        const index = careerAppsStore.findIndex((a) => a.id === id);
+        if (index === -1) {
+            res.status(404).json({ success: false, error: "Application not found!" });
+            return;
+        }
+        const deleted = careerAppsStore.splice(index, 1)[0];
+        saveCareerAppsToFile(careerAppsStore);
+        res.json({
+            success: true,
+            message: "Application deleted successfully",
+            data: deleted,
+        });
+    }
+    catch (err) {
+        console.error("Delete career app error:", err);
+        res.status(500).json({ success: false, error: err.message || "Server error" });
+    }
+});
+const CONTACT_INFO_FILE = path_1.default.join(__dirname, "../contact_info.json");
+const CONTACT_MESSAGES_FILE = path_1.default.join(__dirname, "../contact_messages.json");
+const defaultContactInfo = {
+    address: "Maharashtra Prantik Tailik Mahasabha, Amravati Division, Amravati, Maharashtra, India",
+    phone: "9876543210",
+    email: "info@mptmamravati.org",
+    hours: "Monday - Saturday: 10:00 AM - 6:00 PM",
+};
+const loadContactInfo = () => {
+    try {
+        if (fs_1.default.existsSync(CONTACT_INFO_FILE)) {
+            const raw = fs_1.default.readFileSync(CONTACT_INFO_FILE, "utf-8");
+            return JSON.parse(raw);
+        }
+    }
+    catch (e) {
+        console.error("Error reading contact info file:", e);
+    }
+    try {
+        fs_1.default.writeFileSync(CONTACT_INFO_FILE, JSON.stringify(defaultContactInfo, null, 2), "utf-8");
+    }
+    catch (e) { }
+    return defaultContactInfo;
+};
+const saveContactInfo = (info) => {
+    try {
+        fs_1.default.writeFileSync(CONTACT_INFO_FILE, JSON.stringify(info, null, 2), "utf-8");
+    }
+    catch (e) {
+        console.error("Error saving contact info file:", e);
+    }
+};
+let contactInfoStore = loadContactInfo();
+const defaultContactMessages = [
+    {
+        id: "msg_101",
+        name: "Suresh Deshmukh",
+        email: "suresh.deshmukh@gmail.com",
+        phone: "9822334455",
+        subject: "Membership Inquiry",
+        message: "I want to register for lifetime membership of MPTM Amravati. Please guide me.",
+        status: "UNREAD",
+        createdAt: new Date(Date.now() - 3600000 * 12).toISOString(),
+    },
+    {
+        id: "msg_102",
+        name: "Pooja Patil",
+        email: "pooja.patil@gmail.com",
+        phone: "9876543210",
+        subject: "Event Details Request",
+        message: "Can you provide the schedule for the upcoming divisional conference?",
+        status: "READ",
+        createdAt: new Date(Date.now() - 3600000 * 48).toISOString(),
+    }
+];
+const loadContactMessages = () => {
+    try {
+        if (fs_1.default.existsSync(CONTACT_MESSAGES_FILE)) {
+            const raw = fs_1.default.readFileSync(CONTACT_MESSAGES_FILE, "utf-8");
+            return JSON.parse(raw);
+        }
+    }
+    catch (e) {
+        console.error("Error reading contact messages file:", e);
+    }
+    try {
+        fs_1.default.writeFileSync(CONTACT_MESSAGES_FILE, JSON.stringify(defaultContactMessages, null, 2), "utf-8");
+    }
+    catch (e) { }
+    return defaultContactMessages;
+};
+const saveContactMessages = (msgs) => {
+    try {
+        fs_1.default.writeFileSync(CONTACT_MESSAGES_FILE, JSON.stringify(msgs, null, 2), "utf-8");
+    }
+    catch (e) {
+        console.error("Error saving contact messages file:", e);
+    }
+};
+let contactMessagesStore = loadContactMessages();
+// GET /api/contact/info - Get current editable contact information
+app.get("/api/contact/info", (req, res) => {
+    try {
+        res.json({
+            success: true,
+            data: contactInfoStore,
+        });
+    }
+    catch (err) {
+        console.error("Get contact info error:", err);
+        res.status(500).json({ success: false, error: err.message || "Server error" });
+    }
+});
+// PUT /api/contact/info - Update contact information from Super Admin Dashboard
+app.put("/api/contact/info", (req, res) => {
+    try {
+        const { address, phone, email, hours } = req.body;
+        contactInfoStore = {
+            address: address !== undefined ? String(address).trim() : contactInfoStore.address,
+            phone: phone !== undefined ? String(phone).replace(/\D/g, "").slice(0, 10) : contactInfoStore.phone,
+            email: email !== undefined ? String(email).trim().toLowerCase() : contactInfoStore.email,
+            hours: hours !== undefined ? String(hours).trim() : contactInfoStore.hours,
+        };
+        saveContactInfo(contactInfoStore);
+        res.json({
+            success: true,
+            message: "Contact information updated successfully!",
+            data: contactInfoStore,
+        });
+    }
+    catch (err) {
+        console.error("Update contact info error:", err);
+        res.status(500).json({ success: false, error: err.message || "Server error" });
+    }
+});
+// POST /api/contact/submit - Submit contact inquiry from website
+app.post("/api/contact/submit", (req, res) => {
+    try {
+        const { name, email, phone, subject, message } = req.body;
+        if (!name || !email || !phone || !message) {
+            res.status(400).json({
+                success: false,
+                error: "Name, email, 10-digit phone number, and message are required!",
+            });
+            return;
+        }
+        const cleanPhone = String(phone).replace(/\D/g, "").slice(0, 10);
+        if (cleanPhone.length !== 10) {
+            res.status(400).json({
+                success: false,
+                error: "Please enter a valid 10-digit mobile number!",
+            });
+            return;
+        }
+        const newMsg = {
+            id: `msg_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+            name: String(name).trim(),
+            email: String(email).trim().toLowerCase(),
+            phone: cleanPhone,
+            subject: subject ? String(subject).trim() : "General Inquiry",
+            message: String(message).trim(),
+            status: "UNREAD",
+            createdAt: new Date().toISOString(),
+        };
+        contactMessagesStore.unshift(newMsg);
+        saveContactMessages(contactMessagesStore);
+        res.json({
+            success: true,
+            message: "Your message has been submitted successfully!",
+            data: newMsg,
+        });
+    }
+    catch (err) {
+        console.error("Contact submit error:", err);
+        res.status(500).json({ success: false, error: err.message || "Server error submitting message." });
+    }
+});
+// GET /api/contact/messages - Get all contact messages for Super Admin Dashboard
+app.get("/api/contact/messages", (req, res) => {
+    try {
+        res.json({
+            success: true,
+            count: contactMessagesStore.length,
+            data: contactMessagesStore,
+        });
+    }
+    catch (err) {
+        console.error("Get contact messages error:", err);
+        res.status(500).json({ success: false, error: err.message || "Server error" });
+    }
+});
+// PUT /api/contact/messages/:id - Update message status
+app.put("/api/contact/messages/:id", (req, res) => {
+    try {
+        const { id } = req.params;
+        const { status } = req.body;
+        const target = contactMessagesStore.find((m) => m.id === id);
+        if (!target) {
+            res.status(404).json({ success: false, error: "Message not found!" });
+            return;
+        }
+        if (status) {
+            target.status = status;
+        }
+        saveContactMessages(contactMessagesStore);
+        res.json({
+            success: true,
+            message: "Message status updated successfully",
+            data: target,
+        });
+    }
+    catch (err) {
+        console.error("Update message status error:", err);
+        res.status(500).json({ success: false, error: err.message || "Server error" });
+    }
+});
+// DELETE /api/contact/messages/:id - Delete message
+app.delete("/api/contact/messages/:id", (req, res) => {
+    try {
+        const { id } = req.params;
+        const index = contactMessagesStore.findIndex((m) => m.id === id);
+        if (index === -1) {
+            res.status(404).json({ success: false, error: "Message not found!" });
+            return;
+        }
+        const deleted = contactMessagesStore.splice(index, 1)[0];
+        saveContactMessages(contactMessagesStore);
+        res.json({
+            success: true,
+            message: "Message deleted successfully",
+            data: deleted,
+        });
+    }
+    catch (err) {
+        console.error("Delete contact message error:", err);
+        res.status(500).json({ success: false, error: err.message || "Server error" });
     }
 });
 if (process.env.NODE_ENV !== "production" || !process.env.VERCEL) {

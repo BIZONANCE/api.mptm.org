@@ -462,7 +462,8 @@ app.post("/api/register", async (req: Request, res: Response) => {
             return str;
         }
 
-        const feeNumber = parseInt(formData.registrationFee, 10) || 101;
+        const parsedFee = parseInt(formData.registrationFee, 10);
+        const feeNumber = isNaN(parsedFee) || parsedFee < 101 ? 101 : parsedFee;
 
         const registration = await prisma.memberRegistration.create({
             data: {
@@ -523,8 +524,7 @@ app.post("/api/register", async (req: Request, res: Response) => {
     }
 });
 
-import fs from "fs";
-import path from "path";
+
 
 // Managed Users Data Structure & Disk Persistence
 interface ManagedUser {
