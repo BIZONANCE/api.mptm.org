@@ -54,3 +54,17 @@ model FamilyMember {
   mobile         String
   registration   MemberRegistration @relation(fields: [registrationId], references: [id], onDelete: Cascade, onUpdate: Cascade)
 }
+
+model Donation {
+  id                String   @id @default(cuid())
+  receiptNo         String   @unique
+  name              String
+  mobileNo          String
+  city              String
+  amount            Int
+  amountInWords     String
+  paymentScreenshot String?
+  date              String
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}

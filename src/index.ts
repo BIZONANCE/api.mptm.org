@@ -1294,6 +1294,98 @@ app.delete("/api/contact/messages/:id", (req: Request, res: Response) => {
     }
 });
 
+// ==================== DONATION API ENDPOINTS ====================
+
+// POST /api/donation - Create donation entry
+app.post("/api/donation", async (req: Request, res: Response) => {
+    try {
+        const { name, mobileNo, city, amount, amountInWords, paymentScreenshot, date } = req.body;
+
+        if (!name || !mobileNo || !city || !amount) {
+            res.status(400).json({ success: false, error: "कृपया सर्व आवश्यक माहिती प्रविष्ट करा." });
+            return;
+        }
+
+        const now = new Date();
+        const dateStr = date || `${String(now.getDate()).padStart(2, "0")}/${String(now.getMonth() + 1).padStart(2, "0")}/${now.getFullYear()}`;
+        const randomNum = Math.floor(1000 + Math.random() * 9000);
+        const receiptNo = `MPTM-2026-DON-${randomNum}`;
+
+        const donation = await withDbRetry(async () => {
+            return await (prisma as any).donation.create({
+                data: {
+                    receiptNo,
+                    name: String(name).trim(),
+                    mobileNo: String(mobileNo).trim(),
+                    city: String(city).trim(),
+                    amount: parseInt(String(amount), 10) || 0,
+                    amountInWords: amountInWords || "",
+                    paymentScreenshot: paymentScreenshot || null,
+                    date: dateStr,
+                },
+            });
+        });
+
+        res.json({
+            success: true,
+            message: "देणगी माहिती यशस्वीरित्या जतन झाली!",
+            data: donation,
+        });
+    } catch (error: any) {
+        console.error("Donation Creation Error:", error);
+        res.status(500).json({
+            success: false,
+            error: "सर्व्हर त्रुटी: देणगी जतन करताना अडचण आली.",
+        });
+    }
+});
+
+// GET /api/donation/all - Get all donation records
+app.get("/api/donation/all", async (req: Request, res: Response) => {
+    try {
+        const donations = await withDbRetry(async () => {
+            return await (prisma as any).donation.findMany({
+                orderBy: { createdAt: "desc" },
+            });
+        });
+
+        res.json({
+            success: true,
+            data: donations,
+        });
+    } catch (error: any) {
+        console.error("Fetch Donations Error:", error);
+        res.status(500).json({
+            success: false,
+            error: "सर्व्हर त्रुटी: देणगी डेटा लोड करताना अडचण आली.",
+        });
+    }
+});
+
+// DELETE /api/donation/:id - Delete donation entry
+app.delete("/api/donation/:id", async (req: Request, res: Response) => {
+    try {
+        const id = String(req.params.id);
+        const deleted = await withDbRetry(async () => {
+            return await (prisma as any).donation.delete({
+                where: { id },
+            });
+        });
+
+        res.json({
+            success: true,
+            message: "देणगी नोंद यशस्वीरित्या हटवली गेली",
+            data: deleted,
+        });
+    } catch (error: any) {
+        console.error("Delete Donation Error:", error);
+        res.status(500).json({
+            success: false,
+            error: "देणगी नोंद हटवताना अडचण आली.",
+        });
+    }
+});
+
 if (process.env.NODE_ENV !== "production" || !process.env.VERCEL) {
     app.listen(PORT, () => {
         console.log(`🚀 Backend Express Server running on http://localhost:${PORT}`);

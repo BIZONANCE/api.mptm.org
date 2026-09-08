@@ -16,7 +16,7 @@
     "phone": "9876543210",
     "subject": "Event Details Request",
     "message": "Can you provide the schedule for the upcoming divisional conference?",
-    "status": "UNREAD",
+    "status": "READ",
     "createdAt": "2026-08-25T09:26:11.145Z"
   }
 ]
