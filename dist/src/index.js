@@ -1335,6 +1335,271 @@ app.delete(["/api/donation/:id", "/api/donations/:id", "/api/donation/delete/:id
         });
     }
 });
+const EXECUTIVES_FILE_PATH = path_1.default.join(__dirname, "../executive_members.json");
+const defaultExecutives = [
+    {
+        id: "exec_101",
+        fullName: "राजस बाळकृष्ण गुळवाडे",
+        designation: "विभागीय अध्यक्ष",
+        mobileNo: "9595707707",
+        city: "अमरावती",
+        district: "अमरावती",
+        photoUrl: null,
+        status: "ACTIVE",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+    },
+    {
+        id: "exec_102",
+        fullName: "सुरेश शामराव देशमुख",
+        designation: "विभागीय उपाध्यक्ष",
+        mobileNo: "9822334455",
+        city: "अमरावती",
+        district: "अमरावती",
+        photoUrl: null,
+        status: "ACTIVE",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+    },
+    {
+        id: "exec_103",
+        fullName: "अमित गजानन काळे",
+        designation: "विभागीय सचिव",
+        mobileNo: "9422114455",
+        city: "अमरावती",
+        district: "अमरावती",
+        photoUrl: null,
+        status: "ACTIVE",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+    }
+];
+const loadExecutivesFromFile = () => {
+    try {
+        if (fs_1.default.existsSync(EXECUTIVES_FILE_PATH)) {
+            const raw = fs_1.default.readFileSync(EXECUTIVES_FILE_PATH, "utf-8");
+            return JSON.parse(raw);
+        }
+    }
+    catch (e) {
+        console.error("Error reading executive members file:", e);
+    }
+    try {
+        fs_1.default.writeFileSync(EXECUTIVES_FILE_PATH, JSON.stringify(defaultExecutives, null, 2), "utf-8");
+    }
+    catch (e) { }
+    return defaultExecutives;
+};
+const saveExecutivesToFile = (execs) => {
+    try {
+        fs_1.default.writeFileSync(EXECUTIVES_FILE_PATH, JSON.stringify(execs, null, 2), "utf-8");
+    }
+    catch (e) {
+        console.error("Error writing executive members file:", e);
+    }
+};
+let executivesStore = loadExecutivesFromFile();
+const getExecutivePrismaModel = () => {
+    try {
+        if (prisma_1.prisma?.executiveMember)
+            return prisma_1.prisma.executiveMember;
+        const { PrismaClient } = require("@prisma/client");
+        const tempClient = new PrismaClient();
+        if (tempClient?.executiveMember)
+            return tempClient.executiveMember;
+    }
+    catch (e) {
+        console.warn("Prisma executiveMember model resolution warning:", e);
+    }
+    return null;
+};
+// GET /api/executives - Get all executive committee members
+app.get(["/api/executives", "/api/executives/all", "/api/management/executives"], async (req, res) => {
+    try {
+        let results = [];
+        const execModel = getExecutivePrismaModel();
+        if (execModel) {
+            try {
+                results = await (0, prisma_1.withDbRetry)(async () => {
+                    return await execModel.findMany({
+                        orderBy: { createdAt: "asc" },
+                    });
+                });
+            }
+            catch (dbErr) {
+                console.error("Prisma DB fetch executives error, using JSON fallback:", dbErr);
+            }
+        }
+        if (!results || results.length === 0) {
+            results = executivesStore;
+        }
+        res.json({
+            success: true,
+            count: results.length,
+            data: results,
+        });
+    }
+    catch (error) {
+        console.error("Fetch Executive Members Error:", error);
+        res.json({
+            success: true,
+            count: executivesStore.length,
+            data: executivesStore,
+        });
+    }
+});
+// POST /api/executives - Add new executive member
+app.post(["/api/executives", "/api/executives/create"], async (req, res) => {
+    try {
+        const { fullName, designation, mobileNo, city, district, photoUrl, status } = req.body;
+        if (!fullName || !designation || !mobileNo) {
+            res.status(400).json({ success: false, error: "कृपया पूर्ण नाव, पदनाम आणि मोबाईल नंबर प्रविष्ट करा." });
+            return;
+        }
+        const cleanMobile = String(mobileNo).replace(/\D/g, "").slice(0, 10);
+        const nowIso = new Date().toISOString();
+        let newExec = null;
+        const execModel = getExecutivePrismaModel();
+        if (execModel) {
+            try {
+                newExec = await (0, prisma_1.withDbRetry)(async () => {
+                    return await execModel.create({
+                        data: {
+                            fullName: String(fullName).trim(),
+                            designation: String(designation).trim(),
+                            mobileNo: cleanMobile,
+                            city: city ? String(city).trim() : "अमरावती",
+                            district: district ? String(district).trim() : "अमरावती",
+                            photoUrl: photoUrl || null,
+                            status: status || "ACTIVE",
+                        },
+                    });
+                });
+            }
+            catch (dbErr) {
+                console.error("Prisma DB create executive error, using JSON fallback:", dbErr);
+            }
+        }
+        if (!newExec) {
+            newExec = {
+                id: `exec_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+                fullName: String(fullName).trim(),
+                designation: String(designation).trim(),
+                mobileNo: cleanMobile,
+                city: city ? String(city).trim() : "अमरावती",
+                district: district ? String(district).trim() : "अमरावती",
+                photoUrl: photoUrl || null,
+                status: status || "ACTIVE",
+                createdAt: nowIso,
+                updatedAt: nowIso,
+            };
+            executivesStore.unshift(newExec);
+            saveExecutivesToFile(executivesStore);
+        }
+        res.json({
+            success: true,
+            message: "कार्यकारिणी सदस्य नोंद यशस्वीरित्या जतन झाली!",
+            data: newExec,
+        });
+    }
+    catch (error) {
+        console.error("Create Executive Member Error:", error);
+        res.status(500).json({ success: false, error: "सर्व्हर त्रुटी: कार्यकारिणी सदस्य माहिती जतन करता आली नाही." });
+    }
+});
+// PUT /api/executives/:id - Update executive member details
+app.put("/api/executives/:id", async (req, res) => {
+    try {
+        const id = String(req.params.id);
+        const { fullName, designation, mobileNo, city, district, photoUrl, status } = req.body;
+        const nowIso = new Date().toISOString();
+        let updated = null;
+        const execModel = getExecutivePrismaModel();
+        if (execModel) {
+            try {
+                updated = await (0, prisma_1.withDbRetry)(async () => {
+                    return await execModel.update({
+                        where: { id },
+                        data: {
+                            ...(fullName && { fullName: String(fullName).trim() }),
+                            ...(designation && { designation: String(designation).trim() }),
+                            ...(mobileNo && { mobileNo: String(mobileNo).replace(/\D/g, "").slice(0, 10) }),
+                            ...(city && { city: String(city).trim() }),
+                            ...(district && { district: String(district).trim() }),
+                            ...(photoUrl !== undefined && { photoUrl }),
+                            ...(status && { status }),
+                        },
+                    });
+                });
+            }
+            catch (dbErr) {
+                console.error("Prisma DB update executive error, using JSON fallback:", dbErr);
+            }
+        }
+        const idx = executivesStore.findIndex((e) => e.id === id);
+        if (idx !== -1) {
+            executivesStore[idx] = {
+                ...executivesStore[idx],
+                ...(fullName && { fullName: String(fullName).trim() }),
+                ...(designation && { designation: String(designation).trim() }),
+                ...(mobileNo && { mobileNo: String(mobileNo).replace(/\D/g, "").slice(0, 10) }),
+                ...(city && { city: String(city).trim() }),
+                ...(district && { district: String(district).trim() }),
+                ...(photoUrl !== undefined && { photoUrl }),
+                ...(status && { status }),
+                updatedAt: nowIso,
+            };
+            saveExecutivesToFile(executivesStore);
+            if (!updated)
+                updated = executivesStore[idx];
+        }
+        res.json({
+            success: true,
+            message: "कार्यकारिणी सदस्य माहिती अद्ययावत झाली!",
+            data: updated || { id },
+        });
+    }
+    catch (error) {
+        console.error("Update Executive Member Error:", error);
+        res.status(500).json({ success: false, error: "सर्व्हर त्रुटी: कार्यकारिणी सदस्य अद्ययावत करता आला नाही." });
+    }
+});
+// DELETE /api/executives/:id - Delete executive member
+app.delete(["/api/executives/:id", "/api/executives/delete/:id"], async (req, res) => {
+    try {
+        const id = String(req.params.id);
+        let deleted = null;
+        const execModel = getExecutivePrismaModel();
+        if (execModel) {
+            try {
+                deleted = await (0, prisma_1.withDbRetry)(async () => {
+                    return await execModel.delete({
+                        where: { id },
+                    });
+                });
+            }
+            catch (dbErr) {
+                console.error("Prisma DB delete executive error, using JSON fallback:", dbErr);
+            }
+        }
+        const idx = executivesStore.findIndex((e) => e.id === id);
+        if (idx !== -1) {
+            const fileDeleted = executivesStore.splice(idx, 1)[0];
+            saveExecutivesToFile(executivesStore);
+            if (!deleted)
+                deleted = fileDeleted;
+        }
+        res.json({
+            success: true,
+            message: "कार्यकारिणी सदस्य नोंद हटवली गेली.",
+            data: deleted || { id },
+        });
+    }
+    catch (error) {
+        console.error("Delete Executive Member Error:", error);
+        res.status(500).json({ success: false, error: "कार्यकारिणी सदस्य नोंद हटवताना त्रुटी आली." });
+    }
+});
 if (process.env.NODE_ENV !== "production" || !process.env.VERCEL) {
     app.listen(PORT, () => {
         console.log(`🚀 Backend Express Server running on http://localhost:${PORT}`);

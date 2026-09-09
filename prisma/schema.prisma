@@ -68,3 +68,17 @@ model Donation {
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 }
+
+model ExecutiveMember {
+  id          String   @id @default(cuid())
+  fullName    String
+  designation String
+  mobileNo    String
+  city        String
+  district    String
+  photoUrl    String?
+  status      String   @default("ACTIVE")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+

@@ -1,0 +1,38 @@
+[
+  {
+    "id": "exec_101",
+    "fullName": "राजस बाळकृष्ण गुळवाडे",
+    "designation": "विभागीय अध्यक्ष",
+    "mobileNo": "9595707707",
+    "city": "अमरावती",
+    "district": "अमरावती",
+    "photoUrl": null,
+    "status": "ACTIVE",
+    "createdAt": "2026-09-09T04:25:52.962Z",
+    "updatedAt": "2026-09-09T04:25:52.962Z"
+  },
+  {
+    "id": "exec_102",
+    "fullName": "सुरेश शामराव देशमुख",
+    "designation": "विभागीय उपाध्यक्ष",
+    "mobileNo": "9822334455",
+    "city": "अमरावती",
+    "district": "अमरावती",
+    "photoUrl": null,
+    "status": "ACTIVE",
+    "createdAt": "2026-09-09T04:25:52.962Z",
+    "updatedAt": "2026-09-09T04:25:52.962Z"
+  },
+  {
+    "id": "exec_103",
+    "fullName": "अमित गजानन काळे",
+    "designation": "विभागीय सचिव",
+    "mobileNo": "9422114455",
+    "city": "अमरावती",
+    "district": "अमरावती",
+    "photoUrl": null,
+    "status": "ACTIVE",
+    "createdAt": "2026-09-09T04:25:52.962Z",
+    "updatedAt": "2026-09-09T04:25:52.962Z"
+  }
+]
