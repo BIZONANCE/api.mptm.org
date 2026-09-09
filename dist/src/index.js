@@ -1144,7 +1144,7 @@ app.delete("/api/contact/messages/:id", (req, res) => {
 });
 // ==================== DONATION API ENDPOINTS ====================
 // POST /api/donation - Create donation entry
-app.post("/api/donation", async (req, res) => {
+app.post(["/api/donation", "/api/donations", "/api/donation/create"], async (req, res) => {
     try {
         const { name, mobileNo, city, amount, amountInWords, paymentScreenshot, date } = req.body;
         if (!name || !mobileNo || !city || !amount) {
@@ -1184,7 +1184,7 @@ app.post("/api/donation", async (req, res) => {
     }
 });
 // GET /api/donation/all - Get all donation records
-app.get("/api/donation/all", async (req, res) => {
+app.get(["/api/donation/all", "/api/donations", "/api/donations/all", "/api/donation"], async (req, res) => {
     try {
         const donations = await (0, prisma_1.withDbRetry)(async () => {
             return await prisma_1.prisma.donation.findMany({
@@ -1205,7 +1205,7 @@ app.get("/api/donation/all", async (req, res) => {
     }
 });
 // DELETE /api/donation/:id - Delete donation entry
-app.delete("/api/donation/:id", async (req, res) => {
+app.delete(["/api/donation/:id", "/api/donations/:id", "/api/donation/delete/:id"], async (req, res) => {
     try {
         const id = String(req.params.id);
         const deleted = await (0, prisma_1.withDbRetry)(async () => {

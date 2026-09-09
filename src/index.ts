@@ -1297,7 +1297,7 @@ app.delete("/api/contact/messages/:id", (req: Request, res: Response) => {
 // ==================== DONATION API ENDPOINTS ====================
 
 // POST /api/donation - Create donation entry
-app.post("/api/donation", async (req: Request, res: Response) => {
+app.post(["/api/donation", "/api/donations", "/api/donation/create"], async (req: Request, res: Response) => {
     try {
         const { name, mobileNo, city, amount, amountInWords, paymentScreenshot, date } = req.body;
 
@@ -1341,7 +1341,7 @@ app.post("/api/donation", async (req: Request, res: Response) => {
 });
 
 // GET /api/donation/all - Get all donation records
-app.get("/api/donation/all", async (req: Request, res: Response) => {
+app.get(["/api/donation/all", "/api/donations", "/api/donations/all", "/api/donation"], async (req: Request, res: Response) => {
     try {
         const donations = await withDbRetry(async () => {
             return await (prisma as any).donation.findMany({
@@ -1363,7 +1363,7 @@ app.get("/api/donation/all", async (req: Request, res: Response) => {
 });
 
 // DELETE /api/donation/:id - Delete donation entry
-app.delete("/api/donation/:id", async (req: Request, res: Response) => {
+app.delete(["/api/donation/:id", "/api/donations/:id", "/api/donation/delete/:id"], async (req: Request, res: Response) => {
     try {
         const id = String(req.params.id);
         const deleted = await withDbRetry(async () => {
