@@ -1142,65 +1142,139 @@ app.delete("/api/contact/messages/:id", (req, res) => {
         res.status(500).json({ success: false, error: err.message || "Server error" });
     }
 });
-// ==================== DONATION API ENDPOINTS ====================
+const DONATIONS_FILE_PATH = path_1.default.join(__dirname, "../donations.json");
+const loadDonationsFromFile = () => {
+    try {
+        if (fs_1.default.existsSync(DONATIONS_FILE_PATH)) {
+            const raw = fs_1.default.readFileSync(DONATIONS_FILE_PATH, "utf-8");
+            return JSON.parse(raw);
+        }
+    }
+    catch (e) {
+        console.error("Error reading donations file:", e);
+    }
+    return [];
+};
+const saveDonationsToFile = (donations) => {
+    try {
+        fs_1.default.writeFileSync(DONATIONS_FILE_PATH, JSON.stringify(donations, null, 2), "utf-8");
+    }
+    catch (e) {
+        console.error("Error writing donations file:", e);
+    }
+};
+let donationsStore = loadDonationsFromFile();
+const getDonationPrismaModel = () => {
+    try {
+        if (prisma_1.prisma?.donation)
+            return prisma_1.prisma.donation;
+        const { PrismaClient } = require("@prisma/client");
+        const tempClient = new PrismaClient();
+        if (tempClient?.donation)
+            return tempClient.donation;
+    }
+    catch (e) {
+        console.warn("Prisma donation model resolution warning:", e);
+    }
+    return null;
+};
 // POST /api/donation - Create donation entry
 app.post(["/api/donation", "/api/donations", "/api/donation/create"], async (req, res) => {
     try {
         const { name, mobileNo, city, amount, amountInWords, paymentScreenshot, date } = req.body;
         if (!name || !mobileNo || !city || !amount) {
-            res.status(400).json({ success: false, error: "कृपया सर्व आवश्यक माहिती प्रविष्ट करा." });
+            res.status(400).json({ success: false, error: "Please provide all required fields (Name, Mobile, City, Amount)." });
             return;
         }
         const now = new Date();
         const dateStr = date || `${String(now.getDate()).padStart(2, "0")}/${String(now.getMonth() + 1).padStart(2, "0")}/${now.getFullYear()}`;
         const randomNum = Math.floor(1000 + Math.random() * 9000);
         const receiptNo = `MPTM-2026-DON-${randomNum}`;
-        const donation = await (0, prisma_1.withDbRetry)(async () => {
-            return await prisma_1.prisma.donation.create({
-                data: {
-                    receiptNo,
-                    name: String(name).trim(),
-                    mobileNo: String(mobileNo).trim(),
-                    city: String(city).trim(),
-                    amount: parseInt(String(amount), 10) || 0,
-                    amountInWords: amountInWords || "",
-                    paymentScreenshot: paymentScreenshot || null,
-                    date: dateStr,
-                },
-            });
-        });
+        const createdIso = now.toISOString();
+        let newDonation = null;
+        const donationModel = getDonationPrismaModel();
+        if (donationModel) {
+            try {
+                newDonation = await (0, prisma_1.withDbRetry)(async () => {
+                    return await donationModel.create({
+                        data: {
+                            receiptNo,
+                            name: String(name).trim(),
+                            mobileNo: String(mobileNo).trim(),
+                            city: String(city).trim(),
+                            amount: parseInt(String(amount), 10) || 0,
+                            amountInWords: amountInWords || "",
+                            paymentScreenshot: paymentScreenshot || null,
+                            date: dateStr,
+                        },
+                    });
+                });
+            }
+            catch (dbErr) {
+                console.error("Prisma DB create donation error, using JSON fallback:", dbErr);
+            }
+        }
+        if (!newDonation) {
+            newDonation = {
+                id: `don_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+                receiptNo,
+                name: String(name).trim(),
+                mobileNo: String(mobileNo).trim(),
+                city: String(city).trim(),
+                amount: parseInt(String(amount), 10) || 0,
+                amountInWords: amountInWords || "",
+                paymentScreenshot: paymentScreenshot || null,
+                date: dateStr,
+                createdAt: createdIso,
+                updatedAt: createdIso,
+            };
+            donationsStore.unshift(newDonation);
+            saveDonationsToFile(donationsStore);
+        }
         res.json({
             success: true,
-            message: "देणगी माहिती यशस्वीरित्या जतन झाली!",
-            data: donation,
+            message: "Donation recorded successfully!",
+            data: newDonation,
         });
     }
     catch (error) {
         console.error("Donation Creation Error:", error);
         res.status(500).json({
             success: false,
-            error: "सर्व्हर त्रुटी: देणगी जतन करताना अडचण आली.",
+            error: "Server Error: Could not save donation entry.",
         });
     }
 });
 // GET /api/donation/all - Get all donation records
 app.get(["/api/donation/all", "/api/donations", "/api/donations/all", "/api/donation"], async (req, res) => {
     try {
-        const donations = await (0, prisma_1.withDbRetry)(async () => {
-            return await prisma_1.prisma.donation.findMany({
-                orderBy: { createdAt: "desc" },
-            });
-        });
+        let results = [];
+        const donationModel = getDonationPrismaModel();
+        if (donationModel) {
+            try {
+                results = await (0, prisma_1.withDbRetry)(async () => {
+                    return await donationModel.findMany({
+                        orderBy: { createdAt: "desc" },
+                    });
+                });
+            }
+            catch (dbErr) {
+                console.error("Prisma DB fetch donations error, using JSON fallback:", dbErr);
+            }
+        }
+        if (!results || results.length === 0) {
+            results = donationsStore;
+        }
         res.json({
             success: true,
-            data: donations,
+            data: results,
         });
     }
     catch (error) {
         console.error("Fetch Donations Error:", error);
-        res.status(500).json({
-            success: false,
-            error: "सर्व्हर त्रुटी: देणगी डेटा लोड करताना अडचण आली.",
+        res.json({
+            success: true,
+            data: donationsStore,
         });
     }
 });
@@ -1208,22 +1282,38 @@ app.get(["/api/donation/all", "/api/donations", "/api/donations/all", "/api/dona
 app.delete(["/api/donation/:id", "/api/donations/:id", "/api/donation/delete/:id"], async (req, res) => {
     try {
         const id = String(req.params.id);
-        const deleted = await (0, prisma_1.withDbRetry)(async () => {
-            return await prisma_1.prisma.donation.delete({
-                where: { id },
-            });
-        });
+        let deleted = null;
+        const donationModel = getDonationPrismaModel();
+        if (donationModel) {
+            try {
+                deleted = await (0, prisma_1.withDbRetry)(async () => {
+                    return await donationModel.delete({
+                        where: { id },
+                    });
+                });
+            }
+            catch (dbErr) {
+                console.error("Prisma DB delete donation error, using JSON fallback:", dbErr);
+            }
+        }
+        const idx = donationsStore.findIndex((d) => d.id === id || d.receiptNo === id);
+        if (idx !== -1) {
+            const fileDeleted = donationsStore.splice(idx, 1)[0];
+            saveDonationsToFile(donationsStore);
+            if (!deleted)
+                deleted = fileDeleted;
+        }
         res.json({
             success: true,
-            message: "देणगी नोंद यशस्वीरित्या हटवली गेली",
-            data: deleted,
+            message: "Donation record deleted successfully.",
+            data: deleted || { id },
         });
     }
     catch (error) {
         console.error("Delete Donation Error:", error);
         res.status(500).json({
             success: false,
-            error: "देणगी नोंद हटवताना अडचण आली.",
+            error: "Error removing donation entry.",
         });
     }
 });
