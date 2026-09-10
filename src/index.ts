@@ -1366,6 +1366,58 @@ const getDonationPrismaModel = () => {
     return null;
 };
 
+const getNextDonationReceiptNo = async (): Promise<string> => {
+    const currentYear = new Date().getFullYear();
+    const prefix = `MPTM-${currentYear}-DON-`;
+
+    let maxSeq = 0;
+
+    const donationModel = getDonationPrismaModel();
+    if (donationModel) {
+        try {
+            const allDonations = await donationModel.findMany({
+                where: { receiptNo: { startsWith: prefix } },
+                select: { receiptNo: true }
+            });
+            for (const item of allDonations) {
+                const numPart = item.receiptNo.replace(prefix, "");
+                const seq = parseInt(numPart, 10);
+                if (!isNaN(seq) && seq < 1000 && seq > maxSeq) {
+                    maxSeq = seq;
+                }
+            }
+        } catch (e) {
+            console.error("Error fetching donation seq from DB:", e);
+        }
+    }
+
+    if (Array.isArray(donationsStore)) {
+        for (const item of donationsStore) {
+            if (item.receiptNo && item.receiptNo.startsWith(prefix)) {
+                const numPart = item.receiptNo.replace(prefix, "");
+                const seq = parseInt(numPart, 10);
+                if (!isNaN(seq) && seq < 1000 && seq > maxSeq) {
+                    maxSeq = seq;
+                }
+            }
+        }
+    }
+
+    const nextSeq = maxSeq + 1;
+    return `${prefix}${String(nextSeq).padStart(3, "0")}`;
+};
+
+// GET /api/donation/next-number - Fetch next sequential donation receipt number
+app.get(["/api/donation/next-number", "/api/donations/next-number"], async (_req: Request, res: Response) => {
+    try {
+        const nextReceiptNo = await getNextDonationReceiptNo();
+        res.json({ success: true, receiptNo: nextReceiptNo });
+    } catch (error) {
+        const currentYear = new Date().getFullYear();
+        res.json({ success: true, receiptNo: `MPTM-${currentYear}-DON-001` });
+    }
+});
+
 // POST /api/donation - Create donation entry
 app.post(["/api/donation", "/api/donations", "/api/donation/create"], async (req: Request, res: Response) => {
     try {
@@ -1378,8 +1430,7 @@ app.post(["/api/donation", "/api/donations", "/api/donation/create"], async (req
 
         const now = new Date();
         const dateStr = date || `${String(now.getDate()).padStart(2, "0")}/${String(now.getMonth() + 1).padStart(2, "0")}/${now.getFullYear()}`;
-        const randomNum = Math.floor(1000 + Math.random() * 9000);
-        const receiptNo = `MPTM-2026-DON-${randomNum}`;
+        const receiptNo = await getNextDonationReceiptNo();
         const createdIso = now.toISOString();
 
         let newDonation: DonationRecordItem | null = null;
