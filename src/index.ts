@@ -216,7 +216,7 @@ const seedDefaultAdmin = async () => {
 // Middleware to ensure admin seed on requests without blocking initialization
 app.use(async (_req, _res, next) => {
     if (!adminSeeded) {
-        seedDefaultAdmin().catch(() => {});
+        seedDefaultAdmin().catch(() => { });
     }
     next();
 });
@@ -929,7 +929,7 @@ const loadCareerAppsFromFile = (): CareerAppItem[] => {
     ];
     try {
         fs.writeFileSync(CAREER_FILE_PATH, JSON.stringify(defaultApps, null, 2), "utf-8");
-    } catch (e) {}
+    } catch (e) { }
     return defaultApps;
 };
 
@@ -1102,7 +1102,7 @@ const loadContactInfo = (): ContactInfoData => {
     }
     try {
         fs.writeFileSync(CONTACT_INFO_FILE, JSON.stringify(defaultContactInfo, null, 2), "utf-8");
-    } catch (e) {}
+    } catch (e) { }
     return defaultContactInfo;
 };
 
@@ -1150,7 +1150,7 @@ const loadContactMessages = (): ContactMessageItem[] => {
     }
     try {
         fs.writeFileSync(CONTACT_MESSAGES_FILE, JSON.stringify(defaultContactMessages, null, 2), "utf-8");
-    } catch (e) {}
+    } catch (e) { }
     return defaultContactMessages;
 };
 
@@ -1580,7 +1580,7 @@ const loadExecutivesFromFile = (): ExecutiveMemberRecordItem[] => {
     }
     try {
         fs.writeFileSync(EXECUTIVES_FILE_PATH, JSON.stringify(defaultExecutives, null, 2), "utf-8");
-    } catch (e) {}
+    } catch (e) { }
     return defaultExecutives;
 };
 
@@ -1800,6 +1800,179 @@ app.delete(["/api/executives/:id", "/api/executives/delete/:id"], async (req: Re
     } catch (error: any) {
         console.error("Delete Executive Member Error:", error);
         res.status(500).json({ success: false, error: "कार्यकारिणी सदस्य नोंद हटवताना त्रुटी आली." });
+    }
+});
+
+// ==================== ADS MANAGEMENT ENDPOINTS ====================
+export interface SocialLinks {
+    whatsapp?: string;
+    facebook?: string;
+    instagram?: string;
+    youtube?: string;
+    twitter?: string;
+    website?: string;
+}
+
+export interface AdItem {
+    id: string;
+    title: string;
+    subtitle?: string;
+    imageUrl?: string;
+    adLink?: string;
+    socialLinks?: SocialLinks;
+    isActive: boolean;
+    createdAt: string;
+    updatedAt?: string;
+}
+
+const ADS_FILE_PATH = path.join(__dirname, "../ads.json");
+
+const loadAdsFromFile = (): AdItem[] => {
+    try {
+        if (fs.existsSync(ADS_FILE_PATH)) {
+            const raw = fs.readFileSync(ADS_FILE_PATH, "utf-8");
+            return JSON.parse(raw);
+        }
+    } catch (e) {
+        console.error("Error reading ads file:", e);
+    }
+    const defaultAds: AdItem[] = [
+        {
+            id: "ad_101",
+            title: "महाराष्ट्र प्रांतिक तैलिक महासभा – विशेष नोंदणी अभियान २०२६",
+            subtitle: "अमरावती विभागातील सर्व तैलिक बांधवांसाठी महत्त्वाची सूचना",
+            imageUrl: "/mptmm.png",
+            adLink: "https://mptmamravati.org/registration",
+            socialLinks: {
+                whatsapp: "https://wa.me/919876543210?text=Hello%20MPTM%20Amravati",
+                facebook: "https://facebook.com",
+                instagram: "https://instagram.com",
+                youtube: "https://youtube.com",
+                twitter: "https://x.com",
+                website: "https://mptmamravati.org"
+            },
+            isActive: true,
+            createdAt: new Date().toISOString()
+        }
+    ];
+    try {
+        fs.writeFileSync(ADS_FILE_PATH, JSON.stringify(defaultAds, null, 2), "utf-8");
+    } catch (e) {
+        console.error("Error writing default ads file:", e);
+    }
+    return defaultAds;
+};
+
+const saveAdsToFile = (ads: AdItem[]) => {
+    try {
+        fs.writeFileSync(ADS_FILE_PATH, JSON.stringify(ads, null, 2), "utf-8");
+    } catch (e) {
+        console.error("Error saving ads file:", e);
+    }
+};
+
+let adsStore: AdItem[] = loadAdsFromFile();
+
+// GET /api/ads - Get all ads
+app.get("/api/ads", (req: Request, res: Response) => {
+    adsStore = loadAdsFromFile();
+    res.json({ success: true, data: adsStore });
+});
+
+// GET /api/ads/active - Get active ads for website front page popup
+app.get("/api/ads/active", (req: Request, res: Response) => {
+    adsStore = loadAdsFromFile();
+    const activeAds = adsStore.filter((ad) => ad.isActive);
+    res.json({ success: true, data: activeAds });
+});
+
+// POST /api/ads - Create a new ad
+app.post("/api/ads", (req: Request, res: Response) => {
+    try {
+        const { title, subtitle, imageUrl, adLink, socialLinks, isActive } = req.body;
+
+        const newAd: AdItem = {
+            id: `ad_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+            title: title ? String(title).trim() : "Advertisement",
+            subtitle: subtitle ? String(subtitle).trim() : "",
+            imageUrl: imageUrl ? String(imageUrl).trim() : "",
+            adLink: adLink ? String(adLink).trim() : "",
+            socialLinks: socialLinks || {},
+            isActive: isActive !== undefined ? Boolean(isActive) : true,
+            createdAt: new Date().toISOString()
+        };
+
+        adsStore.unshift(newAd);
+        saveAdsToFile(adsStore);
+
+        res.json({
+            success: true,
+            message: "Advertisement created successfully!",
+            data: newAd
+        });
+    } catch (error: any) {
+        console.error("Create Ad Error:", error);
+        res.status(500).json({ success: false, error: "Server Error: Failed to create ad." });
+    }
+});
+
+// PUT /api/ads/:id - Update an ad
+app.put("/api/ads/:id", (req: Request, res: Response) => {
+    try {
+        const id = String(req.params.id);
+        const { title, subtitle, imageUrl, adLink, socialLinks, isActive } = req.body;
+
+        const idx = adsStore.findIndex((a) => a.id === id);
+        if (idx === -1) {
+            res.status(404).json({ success: false, error: "Advertisement not found" });
+            return;
+        }
+
+        adsStore[idx] = {
+            ...adsStore[idx],
+            ...(title !== undefined && { title: String(title).trim() }),
+            ...(subtitle !== undefined && { subtitle: String(subtitle).trim() }),
+            ...(imageUrl !== undefined && { imageUrl: String(imageUrl).trim() }),
+            ...(adLink !== undefined && { adLink: String(adLink).trim() }),
+            ...(socialLinks !== undefined && { socialLinks }),
+            ...(isActive !== undefined && { isActive: Boolean(isActive) }),
+            updatedAt: new Date().toISOString()
+        };
+
+        saveAdsToFile(adsStore);
+
+        res.json({
+            success: true,
+            message: "Advertisement updated successfully!",
+            data: adsStore[idx]
+        });
+    } catch (error: any) {
+        console.error("Update Ad Error:", error);
+        res.status(500).json({ success: false, error: "Server Error: Failed to update ad." });
+    }
+});
+
+// DELETE /api/ads/:id - Delete an ad
+app.delete(["/api/ads/:id", "/api/ads/delete/:id"], (req: Request, res: Response) => {
+    try {
+        const id = String(req.params.id);
+        const idx = adsStore.findIndex((a) => a.id === id);
+        if (idx === -1) {
+            res.status(404).json({ success: false, error: "Advertisement not found" });
+            return;
+        }
+
+        const deleted = adsStore.splice(idx, 1)[0];
+        saveAdsToFile(adsStore);
+
+        res.json({
+            success: true,
+            message: "Advertisement deleted successfully",
+            data: deleted
+        });
+    } catch (error: any) {
+        console.error("Delete Ad Error:", error);
+        res.status(500).json({ success: false, error: "Server Error: Failed to delete ad." });
     }
 });
 
