@@ -1825,16 +1825,36 @@ export interface AdItem {
     updatedAt?: string;
 }
 
-const ADS_FILE_PATH = path.join(__dirname, "../ads.json");
+const getAdsFilePath = (): string => {
+    const possiblePaths = [
+        path.join(__dirname, "../ads.json"),
+        path.join(__dirname, "ads.json"),
+        path.join(process.cwd(), "ads.json"),
+        "/tmp/ads.json"
+    ];
+    for (const p of possiblePaths) {
+        if (fs.existsSync(p)) return p;
+    }
+    return path.join(process.cwd(), "ads.json");
+};
 
 const loadAdsFromFile = (): AdItem[] => {
-    try {
-        if (fs.existsSync(ADS_FILE_PATH)) {
-            const raw = fs.readFileSync(ADS_FILE_PATH, "utf-8");
-            return JSON.parse(raw);
+    const possiblePaths = [
+        path.join(__dirname, "../ads.json"),
+        path.join(__dirname, "ads.json"),
+        path.join(process.cwd(), "ads.json"),
+        "/tmp/ads.json"
+    ];
+    for (const p of possiblePaths) {
+        try {
+            if (fs.existsSync(p)) {
+                const raw = fs.readFileSync(p, "utf-8");
+                const parsed = JSON.parse(raw);
+                if (Array.isArray(parsed)) return parsed;
+            }
+        } catch (e) {
+            console.error("Error reading ads file from", p, e);
         }
-    } catch (e) {
-        console.error("Error reading ads file:", e);
     }
     const defaultAds: AdItem[] = [
         {
@@ -1856,7 +1876,8 @@ const loadAdsFromFile = (): AdItem[] => {
         }
     ];
     try {
-        fs.writeFileSync(ADS_FILE_PATH, JSON.stringify(defaultAds, null, 2), "utf-8");
+        const targetPath = getAdsFilePath();
+        fs.writeFileSync(targetPath, JSON.stringify(defaultAds, null, 2), "utf-8");
     } catch (e) {
         console.error("Error writing default ads file:", e);
     }
@@ -1865,29 +1886,35 @@ const loadAdsFromFile = (): AdItem[] => {
 
 const saveAdsToFile = (ads: AdItem[]) => {
     try {
-        fs.writeFileSync(ADS_FILE_PATH, JSON.stringify(ads, null, 2), "utf-8");
+        const targetPath = getAdsFilePath();
+        fs.writeFileSync(targetPath, JSON.stringify(ads, null, 2), "utf-8");
     } catch (e) {
         console.error("Error saving ads file:", e);
+        try {
+            fs.writeFileSync("/tmp/ads.json", JSON.stringify(ads, null, 2), "utf-8");
+        } catch (tmpErr) {
+            console.error("Error saving ads to /tmp:", tmpErr);
+        }
     }
 };
 
 let adsStore: AdItem[] = loadAdsFromFile();
 
 // GET /api/ads - Get all ads
-app.get("/api/ads", (req: Request, res: Response) => {
+app.get(["/api/ads", "/ads", "/api/ads/all"], (req: Request, res: Response) => {
     adsStore = loadAdsFromFile();
     res.json({ success: true, data: adsStore });
 });
 
 // GET /api/ads/active - Get active ads for website front page popup
-app.get("/api/ads/active", (req: Request, res: Response) => {
+app.get(["/api/ads/active", "/ads/active"], (req: Request, res: Response) => {
     adsStore = loadAdsFromFile();
     const activeAds = adsStore.filter((ad) => ad.isActive);
     res.json({ success: true, data: activeAds });
 });
 
 // POST /api/ads - Create a new ad
-app.post("/api/ads", (req: Request, res: Response) => {
+app.post(["/api/ads", "/ads"], (req: Request, res: Response) => {
     try {
         const { title, subtitle, imageUrl, adLink, socialLinks, isActive } = req.body;
 
@@ -1917,7 +1944,7 @@ app.post("/api/ads", (req: Request, res: Response) => {
 });
 
 // PUT /api/ads/:id - Update an ad
-app.put("/api/ads/:id", (req: Request, res: Response) => {
+app.put(["/api/ads/:id", "/ads/:id"], (req: Request, res: Response) => {
     try {
         const id = String(req.params.id);
         const { title, subtitle, imageUrl, adLink, socialLinks, isActive } = req.body;
@@ -1953,7 +1980,7 @@ app.put("/api/ads/:id", (req: Request, res: Response) => {
 });
 
 // DELETE /api/ads/:id - Delete an ad
-app.delete(["/api/ads/:id", "/api/ads/delete/:id"], (req: Request, res: Response) => {
+app.delete(["/api/ads/:id", "/api/ads/delete/:id", "/ads/:id", "/ads/delete/:id"], (req: Request, res: Response) => {
     try {
         const id = String(req.params.id);
         const idx = adsStore.findIndex((a) => a.id === id);
