@@ -154,7 +154,7 @@ app.get("/", (_req, res) => {
         service: "MPTM Amravati Backend API",
         message: "API is running successfully!",
         timestamp: new Date().toISOString(),
-        endpoints: ["/health", "/api/next-numbers", "/api/register", "/api/admin/login"]
+        endpoints: ["/health", "/api/next-numbers", "/api/register", "/api/admin/login", "/api/ads", "/api/ads/active"]
     });
 });
 // Health Check Route
@@ -1598,6 +1598,175 @@ app.delete(["/api/executives/:id", "/api/executives/delete/:id"], async (req, re
     catch (error) {
         console.error("Delete Executive Member Error:", error);
         res.status(500).json({ success: false, error: "कार्यकारिणी सदस्य नोंद हटवताना त्रुटी आली." });
+    }
+});
+const getAdsFilePath = () => {
+    const possiblePaths = [
+        path_1.default.join(__dirname, "../ads.json"),
+        path_1.default.join(__dirname, "ads.json"),
+        path_1.default.join(process.cwd(), "ads.json"),
+        "/tmp/ads.json"
+    ];
+    for (const p of possiblePaths) {
+        if (fs_1.default.existsSync(p))
+            return p;
+    }
+    return path_1.default.join(process.cwd(), "ads.json");
+};
+const loadAdsFromFile = () => {
+    const possiblePaths = [
+        path_1.default.join(__dirname, "../ads.json"),
+        path_1.default.join(__dirname, "ads.json"),
+        path_1.default.join(process.cwd(), "ads.json"),
+        "/tmp/ads.json"
+    ];
+    for (const p of possiblePaths) {
+        try {
+            if (fs_1.default.existsSync(p)) {
+                const raw = fs_1.default.readFileSync(p, "utf-8");
+                const parsed = JSON.parse(raw);
+                if (Array.isArray(parsed))
+                    return parsed;
+            }
+        }
+        catch (e) {
+            console.error("Error reading ads file from", p, e);
+        }
+    }
+    const defaultAds = [
+        {
+            id: "ad_101",
+            title: "महाराष्ट्र प्रांतिक तैलिक महासभा – विशेष नोंदणी अभियान २०२६",
+            subtitle: "अमरावती विभागातील सर्व तैलिक बांधवांसाठी महत्त्वाची सूचना",
+            imageUrl: "/mptmm.png",
+            adLink: "https://mptmamravati.org/registration",
+            socialLinks: {
+                whatsapp: "https://wa.me/919876543210?text=Hello%20MPTM%20Amravati",
+                facebook: "https://facebook.com",
+                instagram: "https://instagram.com",
+                youtube: "https://youtube.com",
+                twitter: "https://x.com",
+                website: "https://mptmamravati.org"
+            },
+            isActive: true,
+            createdAt: new Date().toISOString()
+        }
+    ];
+    try {
+        const targetPath = getAdsFilePath();
+        fs_1.default.writeFileSync(targetPath, JSON.stringify(defaultAds, null, 2), "utf-8");
+    }
+    catch (e) {
+        console.error("Error writing default ads file:", e);
+    }
+    return defaultAds;
+};
+const saveAdsToFile = (ads) => {
+    try {
+        const targetPath = getAdsFilePath();
+        fs_1.default.writeFileSync(targetPath, JSON.stringify(ads, null, 2), "utf-8");
+    }
+    catch (e) {
+        console.error("Error saving ads file:", e);
+        try {
+            fs_1.default.writeFileSync("/tmp/ads.json", JSON.stringify(ads, null, 2), "utf-8");
+        }
+        catch (tmpErr) {
+            console.error("Error saving ads to /tmp:", tmpErr);
+        }
+    }
+};
+let adsStore = loadAdsFromFile();
+// GET /api/ads - Get all ads
+app.get(["/api/ads", "/ads", "/api/ads/all"], (req, res) => {
+    adsStore = loadAdsFromFile();
+    res.json({ success: true, data: adsStore });
+});
+// GET /api/ads/active - Get active ads for website front page popup
+app.get(["/api/ads/active", "/ads/active"], (req, res) => {
+    adsStore = loadAdsFromFile();
+    const activeAds = adsStore.filter((ad) => ad.isActive);
+    res.json({ success: true, data: activeAds });
+});
+// POST /api/ads - Create a new ad
+app.post(["/api/ads", "/ads"], (req, res) => {
+    try {
+        const { title, subtitle, imageUrl, adLink, socialLinks, isActive } = req.body;
+        const newAd = {
+            id: `ad_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+            title: title ? String(title).trim() : "Advertisement",
+            subtitle: subtitle ? String(subtitle).trim() : "",
+            imageUrl: imageUrl ? String(imageUrl).trim() : "",
+            adLink: adLink ? String(adLink).trim() : "",
+            socialLinks: socialLinks || {},
+            isActive: isActive !== undefined ? Boolean(isActive) : true,
+            createdAt: new Date().toISOString()
+        };
+        adsStore.unshift(newAd);
+        saveAdsToFile(adsStore);
+        res.json({
+            success: true,
+            message: "Advertisement created successfully!",
+            data: newAd
+        });
+    }
+    catch (error) {
+        console.error("Create Ad Error:", error);
+        res.status(500).json({ success: false, error: "Server Error: Failed to create ad." });
+    }
+});
+// PUT & POST /api/ads/:id - Update an ad
+app.put(["/api/ads/:id", "/ads/:id", "/api/ads/update/:id"], (req, res) => {
+    try {
+        const id = String(req.params.id);
+        const { title, subtitle, imageUrl, adLink, socialLinks, isActive } = req.body;
+        const idx = adsStore.findIndex((a) => a.id === id);
+        if (idx === -1) {
+            res.status(404).json({ success: false, error: "Advertisement not found" });
+            return;
+        }
+        adsStore[idx] = {
+            ...adsStore[idx],
+            ...(title !== undefined && { title: String(title).trim() }),
+            ...(subtitle !== undefined && { subtitle: String(subtitle).trim() }),
+            ...(imageUrl !== undefined && { imageUrl: String(imageUrl).trim() }),
+            ...(adLink !== undefined && { adLink: String(adLink).trim() }),
+            ...(socialLinks !== undefined && { socialLinks }),
+            ...(isActive !== undefined && { isActive: Boolean(isActive) }),
+            updatedAt: new Date().toISOString()
+        };
+        saveAdsToFile(adsStore);
+        res.json({
+            success: true,
+            message: "Advertisement updated successfully!",
+            data: adsStore[idx]
+        });
+    }
+    catch (error) {
+        console.error("Update Ad Error:", error);
+        res.status(500).json({ success: false, error: "Server Error: Failed to update ad." });
+    }
+});
+// DELETE /api/ads/:id - Delete an ad
+app.delete(["/api/ads/:id", "/api/ads/delete/:id", "/ads/:id", "/ads/delete/:id"], (req, res) => {
+    try {
+        const id = String(req.params.id);
+        const idx = adsStore.findIndex((a) => a.id === id);
+        if (idx === -1) {
+            res.status(404).json({ success: false, error: "Advertisement not found" });
+            return;
+        }
+        const deleted = adsStore.splice(idx, 1)[0];
+        saveAdsToFile(adsStore);
+        res.json({
+            success: true,
+            message: "Advertisement deleted successfully",
+            data: deleted
+        });
+    }
+    catch (error) {
+        console.error("Delete Ad Error:", error);
+        res.status(500).json({ success: false, error: "Server Error: Failed to delete ad." });
     }
 });
 if (process.env.NODE_ENV !== "production" || !process.env.VERCEL) {

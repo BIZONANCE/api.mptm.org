@@ -166,7 +166,7 @@ app.get("/", (_req: Request, res: Response) => {
         service: "MPTM Amravati Backend API",
         message: "API is running successfully!",
         timestamp: new Date().toISOString(),
-        endpoints: ["/health", "/api/next-numbers", "/api/register", "/api/admin/login"]
+        endpoints: ["/health", "/api/next-numbers", "/api/register", "/api/admin/login", "/api/ads", "/api/ads/active"]
     });
 });
 
@@ -1943,8 +1943,8 @@ app.post(["/api/ads", "/ads"], (req: Request, res: Response) => {
     }
 });
 
-// PUT /api/ads/:id - Update an ad
-app.put(["/api/ads/:id", "/ads/:id"], (req: Request, res: Response) => {
+// PUT & POST /api/ads/:id - Update an ad
+app.put(["/api/ads/:id", "/ads/:id", "/api/ads/update/:id"], (req: Request, res: Response) => {
     try {
         const id = String(req.params.id);
         const { title, subtitle, imageUrl, adLink, socialLinks, isActive } = req.body;
