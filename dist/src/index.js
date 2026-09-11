@@ -276,49 +276,76 @@ app.post("/api/admin/login", async (req, res) => {
     }
 });
 // GET /api/next-numbers - Generate next unique sequence numbers for receipt and member
-app.get("/api/next-numbers", async (_req, res) => {
+app.get("/api/next-numbers", async (req, res) => {
     try {
+        const type = String(req.query.type || "").toUpperCase();
+        const isExecutive = type === "EXECUTIVE" || type === "EXECUTIVE_MEMBER";
         const currentYear = new Date().getFullYear();
-        const yearReceiptPrefix = `MPTM-${currentYear}-AMT-R`;
-        const yearMemberPrefix = `MPTM-${currentYear}-AMT-S`;
-        // Find existing registrations for current year prefix
-        const yearRegistrations = await prisma_1.prisma.memberRegistration.findMany({
-            where: {
-                receiptNo: {
-                    startsWith: yearReceiptPrefix,
-                },
-            },
-            select: { receiptNo: true },
-        });
-        // Find existing main members for current year prefix
-        const yearMainMembers = await prisma_1.prisma.mainMember.findMany({
-            where: {
-                memberNo: {
-                    startsWith: yearMemberPrefix,
-                },
-            },
-            select: { memberNo: true },
-        });
-        // Calculate next receipt sequence for current year
+        const yearReceiptPrefix = isExecutive ? "MPTM-EM-R" : `MPTM-${currentYear}-AMT-R`;
+        const yearMemberPrefix = isExecutive ? "MPTM-EM-S" : `MPTM-${currentYear}-AMT-S`;
+        let registrations = [];
+        let mainMembers = [];
+        try {
+            registrations = await prisma_1.prisma.memberRegistration.findMany({
+                select: { receiptNo: true },
+            });
+            mainMembers = await prisma_1.prisma.mainMember.findMany({
+                select: { memberNo: true },
+            });
+        }
+        catch (dbErr) {
+            console.warn("Next numbers DB fetch warning:", dbErr?.message || dbErr);
+        }
         let maxReceiptSeq = 0;
-        for (const reg of yearRegistrations) {
-            const numPart = reg.receiptNo.replace(yearReceiptPrefix, "");
-            const seq = parseInt(numPart, 10);
-            if (!isNaN(seq) && seq > maxReceiptSeq) {
-                maxReceiptSeq = seq;
+        for (const reg of registrations) {
+            if (reg.receiptNo) {
+                const str = String(reg.receiptNo).trim();
+                if (isExecutive && (str.startsWith("MPTM-EM-R") || str.includes("EM-R"))) {
+                    const match = str.match(/R(\d+)/i) || str.match(/(\d+)/g);
+                    if (match) {
+                        const numStr = Array.isArray(match) ? match[match.length - 1] : match[1];
+                        const seq = parseInt(numStr, 10);
+                        if (!isNaN(seq) && seq > maxReceiptSeq)
+                            maxReceiptSeq = seq;
+                    }
+                }
+                else if (!isExecutive && (str.startsWith(yearReceiptPrefix) || str.includes("AMT-R"))) {
+                    const match = str.match(/R(\d+)/i) || str.match(/(\d+)/g);
+                    if (match) {
+                        const numStr = Array.isArray(match) ? match[match.length - 1] : match[1];
+                        const seq = parseInt(numStr, 10);
+                        if (!isNaN(seq) && seq > maxReceiptSeq)
+                            maxReceiptSeq = seq;
+                    }
+                }
             }
         }
-        const nextReceiptSeq = Math.max(yearRegistrations.length, maxReceiptSeq) + 1;
-        // Calculate next member sequence for current year
         let maxMemberSeq = 0;
-        for (const mem of yearMainMembers) {
-            const numPart = mem.memberNo.replace(yearMemberPrefix, "");
-            const seq = parseInt(numPart, 10);
-            if (!isNaN(seq) && seq > maxMemberSeq) {
-                maxMemberSeq = seq;
+        for (const mem of mainMembers) {
+            if (mem.memberNo) {
+                const str = String(mem.memberNo).trim();
+                if (isExecutive && (str.startsWith("MPTM-EM-S") || str.includes("EM-S"))) {
+                    const match = str.match(/S(\d+)/i) || str.match(/(\d+)/g);
+                    if (match) {
+                        const numStr = Array.isArray(match) ? match[match.length - 1] : match[1];
+                        const seq = parseInt(numStr, 10);
+                        if (!isNaN(seq) && seq > maxMemberSeq)
+                            maxMemberSeq = seq;
+                    }
+                }
+                else if (!isExecutive && (str.startsWith(yearMemberPrefix) || str.includes("AMT-S"))) {
+                    const match = str.match(/S(\d+)/i) || str.match(/(\d+)/g);
+                    if (match) {
+                        const numStr = Array.isArray(match) ? match[match.length - 1] : match[1];
+                        const seq = parseInt(numStr, 10);
+                        if (!isNaN(seq) && seq > maxMemberSeq)
+                            maxMemberSeq = seq;
+                    }
+                }
             }
         }
-        const nextMemberSeq = Math.max(yearMainMembers.length, maxMemberSeq) + 1;
+        const nextReceiptSeq = maxReceiptSeq + 1;
+        const nextMemberSeq = maxMemberSeq + 1;
         const nextReceiptNo = `${yearReceiptPrefix}${String(nextReceiptSeq).padStart(3, "0")}`;
         const nextMemberNo = `${yearMemberPrefix}${String(nextMemberSeq).padStart(3, "0")}`;
         res.json({
@@ -332,12 +359,14 @@ app.get("/api/next-numbers", async (_req, res) => {
     catch (error) {
         console.error("Next numbers error:", error);
         const currentYear = new Date().getFullYear();
+        const type = String(req.query.type || "").toUpperCase();
+        const isExec = type === "EXECUTIVE" || type === "EXECUTIVE_MEMBER";
         res.json({
             success: true,
-            receiptNo: `MPTM-${currentYear}-AMT-R001`,
+            receiptNo: isExec ? "MPTM-EM-R001" : `MPTM-${currentYear}-AMT-R001`,
             nextReceiptSeq: 1,
             nextMemberSeq: 1,
-            nextMemberNo: `MPTM-${currentYear}-AMT-S001`,
+            nextMemberNo: isExec ? "MPTM-EM-S001" : `MPTM-${currentYear}-AMT-S001`,
         });
     }
 });
@@ -1685,6 +1714,7 @@ const loadAdsFromFile = () => {
             id: "ad_101",
             title: "महाराष्ट्र प्रांतिक तैलिक महासभा – विशेष नोंदणी अभियान २०२६",
             subtitle: "अमरावती विभागातील सर्व तैलिक बांधवांसाठी महत्त्वाची सूचना",
+            mediaType: "image",
             imageUrl: "/mptmm.png",
             adLink: "https://mptmamravati.org/registration",
             socialLinks: {
@@ -1693,6 +1723,24 @@ const loadAdsFromFile = () => {
                 instagram: "https://instagram.com",
                 youtube: "https://youtube.com",
                 twitter: "https://x.com",
+                website: "https://mptmamravati.org"
+            },
+            isActive: true,
+            createdAt: new Date().toISOString()
+        },
+        {
+            id: "ad_102_video_demo",
+            title: "महाराष्ट्र प्रांतिक तैलिक महासभा (व्हीडिओ जाहिरात)",
+            subtitle: "अमरावती विभागातील सर्व तैलिक बांधवांसाठी व्हीडिओ जाहिरात",
+            mediaType: "video",
+            videoUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
+            imageUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
+            adLink: "https://mptmamravati.org",
+            socialLinks: {
+                whatsapp: "https://wa.me/919876543210",
+                facebook: "https://facebook.com",
+                instagram: "https://instagram.com",
+                youtube: "https://youtube.com",
                 website: "https://mptmamravati.org"
             },
             isActive: true,
@@ -1738,12 +1786,14 @@ app.get(["/api/ads/active", "/ads/active"], (req, res) => {
 // POST /api/ads - Create a new ad
 app.post(["/api/ads", "/ads"], (req, res) => {
     try {
-        const { title, subtitle, imageUrl, adLink, socialLinks, isActive } = req.body;
+        const { title, subtitle, imageUrl, videoUrl, mediaType, adLink, socialLinks, isActive } = req.body;
         const newAd = {
             id: `ad_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
             title: title ? String(title).trim() : "Advertisement",
             subtitle: subtitle ? String(subtitle).trim() : "",
             imageUrl: imageUrl ? String(imageUrl).trim() : "",
+            videoUrl: videoUrl ? String(videoUrl).trim() : "",
+            mediaType: mediaType === "video" ? "video" : "image",
             adLink: adLink ? String(adLink).trim() : "",
             socialLinks: socialLinks || {},
             isActive: isActive !== undefined ? Boolean(isActive) : true,
@@ -1766,7 +1816,7 @@ app.post(["/api/ads", "/ads"], (req, res) => {
 app.put(["/api/ads/:id", "/ads/:id", "/api/ads/update/:id"], (req, res) => {
     try {
         const id = String(req.params.id);
-        const { title, subtitle, imageUrl, adLink, socialLinks, isActive } = req.body;
+        const { title, subtitle, imageUrl, videoUrl, mediaType, adLink, socialLinks, isActive } = req.body;
         const idx = adsStore.findIndex((a) => a.id === id);
         if (idx === -1) {
             res.status(404).json({ success: false, error: "Advertisement not found" });
@@ -1777,6 +1827,8 @@ app.put(["/api/ads/:id", "/ads/:id", "/api/ads/update/:id"], (req, res) => {
             ...(title !== undefined && { title: String(title).trim() }),
             ...(subtitle !== undefined && { subtitle: String(subtitle).trim() }),
             ...(imageUrl !== undefined && { imageUrl: String(imageUrl).trim() }),
+            ...(videoUrl !== undefined && { videoUrl: String(videoUrl).trim() }),
+            ...(mediaType !== undefined && { mediaType: mediaType === "video" ? "video" : "image" }),
             ...(adLink !== undefined && { adLink: String(adLink).trim() }),
             ...(socialLinks !== undefined && { socialLinks }),
             ...(isActive !== undefined && { isActive: Boolean(isActive) }),

@@ -300,53 +300,75 @@ app.post("/api/admin/login", async (req: Request, res: Response) => {
 });
 
 // GET /api/next-numbers - Generate next unique sequence numbers for receipt and member
-app.get("/api/next-numbers", async (_req: Request, res: Response) => {
+app.get("/api/next-numbers", async (req: Request, res: Response) => {
     try {
+        const type = String(req.query.type || "").toUpperCase();
+        const isExecutive = type === "EXECUTIVE" || type === "EXECUTIVE_MEMBER";
         const currentYear = new Date().getFullYear();
-        const yearReceiptPrefix = `MPTM-${currentYear}-AMT-R`;
-        const yearMemberPrefix = `MPTM-${currentYear}-AMT-S`;
 
-        // Find existing registrations for current year prefix
-        const yearRegistrations = await prisma.memberRegistration.findMany({
-            where: {
-                receiptNo: {
-                    startsWith: yearReceiptPrefix,
-                },
-            },
-            select: { receiptNo: true },
-        });
+        const yearReceiptPrefix = isExecutive ? "MPTM-EM-R" : `MPTM-${currentYear}-AMT-R`;
+        const yearMemberPrefix = isExecutive ? "MPTM-EM-S" : `MPTM-${currentYear}-AMT-S`;
 
-        // Find existing main members for current year prefix
-        const yearMainMembers = await prisma.mainMember.findMany({
-            where: {
-                memberNo: {
-                    startsWith: yearMemberPrefix,
-                },
-            },
-            select: { memberNo: true },
-        });
+        let registrations: any[] = [];
+        let mainMembers: any[] = [];
 
-        // Calculate next receipt sequence for current year
+        try {
+            registrations = await prisma.memberRegistration.findMany({
+                select: { receiptNo: true },
+            });
+            mainMembers = await prisma.mainMember.findMany({
+                select: { memberNo: true },
+            });
+        } catch (dbErr) {
+            console.warn("Next numbers DB fetch warning:", (dbErr as any)?.message || dbErr);
+        }
+
         let maxReceiptSeq = 0;
-        for (const reg of yearRegistrations) {
-            const numPart = reg.receiptNo.replace(yearReceiptPrefix, "");
-            const seq = parseInt(numPart, 10);
-            if (!isNaN(seq) && seq > maxReceiptSeq) {
-                maxReceiptSeq = seq;
+        for (const reg of registrations) {
+            if (reg.receiptNo) {
+                const str = String(reg.receiptNo).trim();
+                if (isExecutive && (str.startsWith("MPTM-EM-R") || str.includes("EM-R"))) {
+                    const match = str.match(/R(\d+)/i) || str.match(/(\d+)/g);
+                    if (match) {
+                        const numStr = Array.isArray(match) ? match[match.length - 1] : match[1];
+                        const seq = parseInt(numStr, 10);
+                        if (!isNaN(seq) && seq > maxReceiptSeq) maxReceiptSeq = seq;
+                    }
+                } else if (!isExecutive && (str.startsWith(yearReceiptPrefix) || str.includes("AMT-R"))) {
+                    const match = str.match(/R(\d+)/i) || str.match(/(\d+)/g);
+                    if (match) {
+                        const numStr = Array.isArray(match) ? match[match.length - 1] : match[1];
+                        const seq = parseInt(numStr, 10);
+                        if (!isNaN(seq) && seq > maxReceiptSeq) maxReceiptSeq = seq;
+                    }
+                }
             }
         }
-        const nextReceiptSeq = Math.max(yearRegistrations.length, maxReceiptSeq) + 1;
 
-        // Calculate next member sequence for current year
         let maxMemberSeq = 0;
-        for (const mem of yearMainMembers) {
-            const numPart = mem.memberNo.replace(yearMemberPrefix, "");
-            const seq = parseInt(numPart, 10);
-            if (!isNaN(seq) && seq > maxMemberSeq) {
-                maxMemberSeq = seq;
+        for (const mem of mainMembers) {
+            if (mem.memberNo) {
+                const str = String(mem.memberNo).trim();
+                if (isExecutive && (str.startsWith("MPTM-EM-S") || str.includes("EM-S"))) {
+                    const match = str.match(/S(\d+)/i) || str.match(/(\d+)/g);
+                    if (match) {
+                        const numStr = Array.isArray(match) ? match[match.length - 1] : match[1];
+                        const seq = parseInt(numStr, 10);
+                        if (!isNaN(seq) && seq > maxMemberSeq) maxMemberSeq = seq;
+                    }
+                } else if (!isExecutive && (str.startsWith(yearMemberPrefix) || str.includes("AMT-S"))) {
+                    const match = str.match(/S(\d+)/i) || str.match(/(\d+)/g);
+                    if (match) {
+                        const numStr = Array.isArray(match) ? match[match.length - 1] : match[1];
+                        const seq = parseInt(numStr, 10);
+                        if (!isNaN(seq) && seq > maxMemberSeq) maxMemberSeq = seq;
+                    }
+                }
             }
         }
-        const nextMemberSeq = Math.max(yearMainMembers.length, maxMemberSeq) + 1;
+
+        const nextReceiptSeq = maxReceiptSeq + 1;
+        const nextMemberSeq = maxMemberSeq + 1;
 
         const nextReceiptNo = `${yearReceiptPrefix}${String(nextReceiptSeq).padStart(3, "0")}`;
         const nextMemberNo = `${yearMemberPrefix}${String(nextMemberSeq).padStart(3, "0")}`;
@@ -361,12 +383,14 @@ app.get("/api/next-numbers", async (_req: Request, res: Response) => {
     } catch (error: any) {
         console.error("Next numbers error:", error);
         const currentYear = new Date().getFullYear();
+        const type = String(req.query.type || "").toUpperCase();
+        const isExec = type === "EXECUTIVE" || type === "EXECUTIVE_MEMBER";
         res.json({
             success: true,
-            receiptNo: `MPTM-${currentYear}-AMT-R001`,
+            receiptNo: isExec ? "MPTM-EM-R001" : `MPTM-${currentYear}-AMT-R001`,
             nextReceiptSeq: 1,
             nextMemberSeq: 1,
-            nextMemberNo: `MPTM-${currentYear}-AMT-S001`,
+            nextMemberNo: isExec ? "MPTM-EM-S001" : `MPTM-${currentYear}-AMT-S001`,
         });
     }
 });
