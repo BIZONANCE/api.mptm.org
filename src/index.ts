@@ -1869,6 +1869,8 @@ export interface AdItem {
     title: string;
     subtitle?: string;
     imageUrl?: string;
+    videoUrl?: string;
+    mediaType?: "image" | "video";
     adLink?: string;
     socialLinks?: SocialLinks;
     isActive: boolean;
@@ -1912,6 +1914,7 @@ const loadAdsFromFile = (): AdItem[] => {
             id: "ad_101",
             title: "महाराष्ट्र प्रांतिक तैलिक महासभा – विशेष नोंदणी अभियान २०२६",
             subtitle: "अमरावती विभागातील सर्व तैलिक बांधवांसाठी महत्त्वाची सूचना",
+            mediaType: "image",
             imageUrl: "/mptmm.png",
             adLink: "https://mptmamravati.org/registration",
             socialLinks: {
@@ -1920,6 +1923,24 @@ const loadAdsFromFile = (): AdItem[] => {
                 instagram: "https://instagram.com",
                 youtube: "https://youtube.com",
                 twitter: "https://x.com",
+                website: "https://mptmamravati.org"
+            },
+            isActive: true,
+            createdAt: new Date().toISOString()
+        },
+        {
+            id: "ad_102_video_demo",
+            title: "महाराष्ट्र प्रांतिक तैलिक महासभा (व्हीडिओ जाहिरात)",
+            subtitle: "अमरावती विभागातील सर्व तैलिक बांधवांसाठी व्हीडिओ जाहिरात",
+            mediaType: "video",
+            videoUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
+            imageUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
+            adLink: "https://mptmamravati.org",
+            socialLinks: {
+                whatsapp: "https://wa.me/919876543210",
+                facebook: "https://facebook.com",
+                instagram: "https://instagram.com",
+                youtube: "https://youtube.com",
                 website: "https://mptmamravati.org"
             },
             isActive: true,
@@ -1967,13 +1988,15 @@ app.get(["/api/ads/active", "/ads/active"], (req: Request, res: Response) => {
 // POST /api/ads - Create a new ad
 app.post(["/api/ads", "/ads"], (req: Request, res: Response) => {
     try {
-        const { title, subtitle, imageUrl, adLink, socialLinks, isActive } = req.body;
+        const { title, subtitle, imageUrl, videoUrl, mediaType, adLink, socialLinks, isActive } = req.body;
 
         const newAd: AdItem = {
             id: `ad_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
             title: title ? String(title).trim() : "Advertisement",
             subtitle: subtitle ? String(subtitle).trim() : "",
             imageUrl: imageUrl ? String(imageUrl).trim() : "",
+            videoUrl: videoUrl ? String(videoUrl).trim() : "",
+            mediaType: mediaType === "video" ? "video" : "image",
             adLink: adLink ? String(adLink).trim() : "",
             socialLinks: socialLinks || {},
             isActive: isActive !== undefined ? Boolean(isActive) : true,
@@ -1998,7 +2021,7 @@ app.post(["/api/ads", "/ads"], (req: Request, res: Response) => {
 app.put(["/api/ads/:id", "/ads/:id", "/api/ads/update/:id"], (req: Request, res: Response) => {
     try {
         const id = String(req.params.id);
-        const { title, subtitle, imageUrl, adLink, socialLinks, isActive } = req.body;
+        const { title, subtitle, imageUrl, videoUrl, mediaType, adLink, socialLinks, isActive } = req.body;
 
         const idx = adsStore.findIndex((a) => a.id === id);
         if (idx === -1) {
@@ -2011,6 +2034,8 @@ app.put(["/api/ads/:id", "/ads/:id", "/api/ads/update/:id"], (req: Request, res:
             ...(title !== undefined && { title: String(title).trim() }),
             ...(subtitle !== undefined && { subtitle: String(subtitle).trim() }),
             ...(imageUrl !== undefined && { imageUrl: String(imageUrl).trim() }),
+            ...(videoUrl !== undefined && { videoUrl: String(videoUrl).trim() }),
+            ...(mediaType !== undefined && { mediaType: mediaType === "video" ? "video" : "image" }),
             ...(adLink !== undefined && { adLink: String(adLink).trim() }),
             ...(socialLinks !== undefined && { socialLinks }),
             ...(isActive !== undefined && { isActive: Boolean(isActive) }),
