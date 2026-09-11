@@ -810,22 +810,10 @@ app.post("/api/users/send-verification", async (req: Request, res: Response) => 
         try {
             const transporter = await createMailTransporter();
             const senderUser = (process.env.SMTP_USER || "sdhole501@gmail.com").trim();
-            const fromHeader = process.env.SMTP_FROM || `"MPTM Amravati" <${senderUser}>`;
-            const cleanSubject = `MPTM Amravati Verification OTP: ${code}`;
-            const plainTextBody = `MPTM Amravati Email Verification Code\n\nYour 6-digit OTP code is: ${code}\nThis code is valid for 10 minutes. Please do not share it with anyone.`;
-
             const info = await transporter.sendMail({
-                from: fromHeader,
+                from: process.env.SMTP_FROM || `"MPTM Amravati" <${senderUser}>`,
                 to: cleanEmail,
-                replyTo: senderUser,
-                subject: cleanSubject,
-                text: plainTextBody,
-                headers: {
-                    "X-Priority": "1 (Highest)",
-                    "X-MSMail-Priority": "High",
-                    "Importance": "High",
-                    "Auto-Submitted": "auto-generated",
-                },
+                subject: `🔑 MPTM Amravati - तुमचा इमेल पडताळणी कोड: ${code}`,
                 html: `
                     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
                         <div style="background-color: #7A0C0C; color: #ffffff; padding: 16px; text-align: center; border-radius: 8px 8px 0 0;">
