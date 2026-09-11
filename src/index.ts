@@ -1841,42 +1841,102 @@ app.put("/api/executives/:id", async (req: Request, res: Response) => {
     }
 });
 
-// DELETE /api/executives/:id - Delete executive member
-app.delete(["/api/executives/:id", "/api/executives/delete/:id"], async (req: Request, res: Response) => {
+// DELETE & POST /api/executives/:id - Delete executive member permanently from database and store
+const handleExecutiveDelete = async (req: Request, res: Response) => {
     try {
         const id = String(req.params.id);
         let deleted: any = null;
+
+        // 1. Find candidate target in database or local store
+        let targetExec: any = null;
         const execModel = getExecutivePrismaModel();
 
         if (execModel) {
             try {
-                deleted = await withDbRetry(async () => {
-                    return await execModel.delete({
-                        where: { id },
+                targetExec = await withDbRetry(async () => {
+                    return await execModel.findFirst({
+                        where: {
+                            OR: [
+                                { id },
+                                { mobileNo: id },
+                                { fullName: id }
+                            ]
+                        }
                     });
                 });
-            } catch (dbErr) {
-                console.error("Prisma DB delete executive error, using JSON fallback:", dbErr);
+            } catch (err) {
+                console.warn("DB find executive target warning:", err);
             }
         }
 
-        const idx = executivesStore.findIndex((e) => e.id === id);
-        if (idx !== -1) {
-            const fileDeleted = executivesStore.splice(idx, 1)[0];
-            saveExecutivesToFile(executivesStore);
-            if (!deleted) deleted = fileDeleted;
+        const storeMatch = executivesStore.find((e) => e.id === id || e.mobileNo === id || e.fullName === id);
+        const mobileToPurge = targetExec?.mobileNo || storeMatch?.mobileNo;
+        const nameToPurge = targetExec?.fullName || storeMatch?.fullName;
+
+        // 2. Delete ExecutiveMember record from PostgreSQL DB
+        if (execModel) {
+            try {
+                await withDbRetry(async () => {
+                    return await execModel.deleteMany({
+                        where: {
+                            OR: [
+                                { id },
+                                ...(mobileToPurge ? [{ mobileNo: mobileToPurge }] : []),
+                                ...(nameToPurge ? [{ fullName: nameToPurge }] : [])
+                            ]
+                        }
+                    });
+                });
+            } catch (dbErr) {
+                console.error("Prisma DB delete executive error:", dbErr);
+            }
         }
+
+        // 3. Delete any linked MemberRegistration / MainMember records from PostgreSQL DB
+        try {
+            const orConditions: any[] = [{ receiptNo: id }];
+            if (mobileToPurge) orConditions.push({ mainMembers: { some: { mobileNo: mobileToPurge } } });
+            if (nameToPurge) orConditions.push({ mainMembers: { some: { fullName: nameToPurge } } });
+
+            const linkedRegs = await prisma.memberRegistration.findMany({
+                where: { OR: orConditions },
+                select: { id: true }
+            });
+
+            for (const reg of linkedRegs) {
+                await deleteRegistrationByIdOrReceipt(reg.id);
+            }
+        } catch (regErr) {
+            console.warn("Linked registration purge warning:", regErr);
+        }
+
+        // 4. Purge from local JSON store
+        const storeIndices: number[] = [];
+        for (let i = 0; i < executivesStore.length; i++) {
+            const e = executivesStore[i];
+            if (e.id === id || (mobileToPurge && e.mobileNo === mobileToPurge) || (nameToPurge && e.fullName === nameToPurge)) {
+                storeIndices.push(i);
+            }
+        }
+        for (let i = storeIndices.length - 1; i >= 0; i--) {
+            const removed = executivesStore.splice(storeIndices[i], 1)[0];
+            if (!deleted) deleted = removed;
+        }
+        saveExecutivesToFile(executivesStore);
 
         res.json({
             success: true,
-            message: "कार्यकारिणी सदस्य नोंद हटवली गेली.",
-            data: deleted || { id },
+            message: "कार्यकारिणी सदस्य व संबंधित डेटाबेसमधील सर्व नोंदी यशस्वीरित्या हटवल्या गेल्या.",
+            data: deleted || targetExec || { id },
         });
     } catch (error: any) {
         console.error("Delete Executive Member Error:", error);
-        res.status(500).json({ success: false, error: "कार्यकारिणी सदस्य नोंद हटवताना त्रुटी आली." });
+        res.status(500).json({ success: false, error: "कार्यकारिणी सदस्य डेटाबेसमधून हटवताना सर्व्हर त्रुटी आली." });
     }
-});
+};
+
+app.delete(["/api/executives/:id", "/api/executives/delete/:id"], handleExecutiveDelete);
+app.post(["/api/executives/delete/:id"], handleExecutiveDelete);
 
 // ==================== ADS MANAGEMENT ENDPOINTS ====================
 export interface SocialLinks {
