@@ -2075,6 +2075,27 @@ app.get(["/api/ads/active", "/ads/active"], (req: Request, res: Response) => {
     res.json({ success: true, data: activeAds });
 });
 
+// POST & PUT /api/ads/reorder - Save new display order of advertisements
+app.post(["/api/ads/reorder", "/ads/reorder"], (req: Request, res: Response) => {
+    try {
+        const { ads: newAdsOrder } = req.body;
+        if (!Array.isArray(newAdsOrder)) {
+            res.status(400).json({ success: false, error: "Invalid array of ads provided" });
+            return;
+        }
+        adsStore = newAdsOrder;
+        saveAdsToFile(adsStore);
+        res.json({
+            success: true,
+            message: "Advertisement sequence updated successfully!",
+            data: adsStore
+        });
+    } catch (error: any) {
+        console.error("Reorder Ads Error:", error);
+        res.status(500).json({ success: false, error: "Server Error: Failed to save ad order." });
+    }
+});
+
 // POST /api/ads - Create a new ad
 app.post(["/api/ads", "/ads"], (req: Request, res: Response) => {
     try {
