@@ -1940,6 +1940,8 @@ app.post(["/api/executives/delete/:id"], handleExecutiveDelete);
 
 // ==================== ADS MANAGEMENT ENDPOINTS ====================
 export interface SocialLinks {
+    phone?: string;
+    visitUs?: string;
     whatsapp?: string;
     facebook?: string;
     instagram?: string;
@@ -2002,6 +2004,8 @@ const loadAdsFromFile = (): AdItem[] => {
             imageUrl: "/mptmm.png",
             adLink: "https://mptmamravati.org/registration",
             socialLinks: {
+                phone: "+919876543210",
+                visitUs: "https://mptmamravati.org/contact-us",
                 whatsapp: "https://wa.me/919876543210?text=Hello%20MPTM%20Amravati",
                 facebook: "https://facebook.com",
                 instagram: "https://instagram.com",
@@ -2021,6 +2025,8 @@ const loadAdsFromFile = (): AdItem[] => {
             imageUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
             adLink: "https://mptmamravati.org",
             socialLinks: {
+                phone: "+919876543210",
+                visitUs: "https://mptmamravati.org/contact-us",
                 whatsapp: "https://wa.me/919876543210",
                 facebook: "https://facebook.com",
                 instagram: "https://instagram.com",
