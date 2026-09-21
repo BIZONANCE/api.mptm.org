@@ -516,6 +516,8 @@ app.post("/api/register", async (req: Request, res: Response) => {
                 registrationFee: feeNumber,
                 amountInWords: formData.amountInWords || "",
                 address: formData.address || "",
+                city: formData.city ? String(formData.city).trim() : "अमरावती",
+                district: formData.district ? String(formData.district).trim() : "अमरावती",
                 paymentMethod: formData.paymentMethod || "रोख",
                 paymentScreenshot: paymentScreenshot || null,
                 referredBy: formData.referredBy || req.body.referredBy || null,
@@ -899,6 +901,8 @@ interface CareerAppItem {
     phone: string;
     position: string;
     message?: string;
+    city?: string;
+    district?: string;
     resumeName?: string;
     resumeData?: string;
     status: "PENDING" | "REVIEWED" | "SHORTLISTED" | "REJECTED";
@@ -970,7 +974,7 @@ let careerAppsStore: CareerAppItem[] = loadCareerAppsFromFile();
 // POST /api/career/apply - Submit job application from frontend
 app.post("/api/career/apply", (req: Request, res: Response) => {
     try {
-        const { name, email, phone, message, resumeName, resumeData, position } = req.body;
+        const { name, email, phone, message, resumeName, resumeData, position, city, district } = req.body;
 
         if (!name || !email || !phone) {
             res.status(400).json({
@@ -996,6 +1000,8 @@ app.post("/api/career/apply", (req: Request, res: Response) => {
             phone: cleanPhone,
             position: position || "Office Assistant",
             message: message ? String(message).trim() : "",
+            city: city ? String(city).trim() : undefined,
+            district: district ? String(district).trim() : undefined,
             resumeName: resumeName || "Resume.pdf",
             resumeData: resumeData || undefined,
             status: "PENDING",
@@ -1101,6 +1107,8 @@ interface ContactMessageItem {
     phone: string;
     subject?: string;
     message: string;
+    city?: string;
+    district?: string;
     status: "UNREAD" | "READ";
     createdAt: string;
 }
@@ -1227,7 +1235,7 @@ app.put("/api/contact/info", (req: Request, res: Response) => {
 // POST /api/contact/submit - Submit contact inquiry from website
 app.post("/api/contact/submit", (req: Request, res: Response) => {
     try {
-        const { name, email, phone, subject, message } = req.body;
+        const { name, email, phone, subject, message, city, district } = req.body;
 
         if (!name || !email || !phone || !message) {
             res.status(400).json({
@@ -1253,6 +1261,8 @@ app.post("/api/contact/submit", (req: Request, res: Response) => {
             phone: cleanPhone,
             subject: subject ? String(subject).trim() : "General Inquiry",
             message: String(message).trim(),
+            city: city ? String(city).trim() : undefined,
+            district: district ? String(district).trim() : undefined,
             status: "UNREAD",
             createdAt: new Date().toISOString(),
         };
@@ -1346,6 +1356,7 @@ interface DonationRecordItem {
     name: string;
     mobileNo: string;
     city: string;
+    district?: string;
     amount: number;
     amountInWords: string;
     paymentScreenshot?: string | null;
@@ -1445,7 +1456,7 @@ app.get(["/api/donation/next-number", "/api/donations/next-number"], async (_req
 // POST /api/donation - Create donation entry
 app.post(["/api/donation", "/api/donations", "/api/donation/create"], async (req: Request, res: Response) => {
     try {
-        const { name, mobileNo, city, amount, amountInWords, paymentScreenshot, date } = req.body;
+        const { name, mobileNo, city, district, amount, amountInWords, paymentScreenshot, date } = req.body;
 
         if (!name || !mobileNo || !city || !amount) {
             res.status(400).json({ success: false, error: "Please provide all required fields (Name, Mobile, City, Amount)." });
@@ -1469,6 +1480,7 @@ app.post(["/api/donation", "/api/donations", "/api/donation/create"], async (req
                             name: String(name).trim(),
                             mobileNo: String(mobileNo).trim(),
                             city: String(city).trim(),
+                            district: district ? String(district).trim() : "अमरावती",
                             amount: parseInt(String(amount), 10) || 0,
                             amountInWords: amountInWords || "",
                             paymentScreenshot: paymentScreenshot || null,
@@ -1488,6 +1500,7 @@ app.post(["/api/donation", "/api/donations", "/api/donation/create"], async (req
                 name: String(name).trim(),
                 mobileNo: String(mobileNo).trim(),
                 city: String(city).trim(),
+                district: district ? String(district).trim() : "अमरावती",
                 amount: parseInt(String(amount), 10) || 0,
                 amountInWords: amountInWords || "",
                 paymentScreenshot: paymentScreenshot || null,

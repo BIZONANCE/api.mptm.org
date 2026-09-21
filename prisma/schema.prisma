@@ -23,6 +23,8 @@ model MemberRegistration {
   registrationFee   Int
   amountInWords     String
   address           String
+  city              String?        @default("अमरावती")
+  district          String?        @default("अमरावती")
   paymentMethod     String
   paymentScreenshot String?
   referredBy        String?
@@ -61,6 +63,7 @@ model Donation {
   name              String
   mobileNo          String
   city              String
+  district          String?  @default("अमरावती")
   amount            Int
   amountInWords     String
   paymentScreenshot String?
