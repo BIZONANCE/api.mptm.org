@@ -479,6 +479,8 @@ app.post("/api/register", async (req, res) => {
                 registrationFee: feeNumber,
                 amountInWords: formData.amountInWords || "",
                 address: formData.address || "",
+                city: formData.city ? String(formData.city).trim() : "अमरावती",
+                district: formData.district ? String(formData.district).trim() : "अमरावती",
                 paymentMethod: formData.paymentMethod || "रोख",
                 paymentScreenshot: paymentScreenshot || null,
                 referredBy: formData.referredBy || req.body.referredBy || null,
@@ -869,7 +871,7 @@ let careerAppsStore = loadCareerAppsFromFile();
 // POST /api/career/apply - Submit job application from frontend
 app.post("/api/career/apply", (req, res) => {
     try {
-        const { name, email, phone, message, resumeName, resumeData, position } = req.body;
+        const { name, email, phone, message, resumeName, resumeData, position, city, district } = req.body;
         if (!name || !email || !phone) {
             res.status(400).json({
                 success: false,
@@ -892,6 +894,8 @@ app.post("/api/career/apply", (req, res) => {
             phone: cleanPhone,
             position: position || "Office Assistant",
             message: message ? String(message).trim() : "",
+            city: city ? String(city).trim() : undefined,
+            district: district ? String(district).trim() : undefined,
             resumeName: resumeName || "Resume.pdf",
             resumeData: resumeData || undefined,
             status: "PENDING",
@@ -1089,7 +1093,7 @@ app.put("/api/contact/info", (req, res) => {
 // POST /api/contact/submit - Submit contact inquiry from website
 app.post("/api/contact/submit", (req, res) => {
     try {
-        const { name, email, phone, subject, message } = req.body;
+        const { name, email, phone, subject, message, city, district } = req.body;
         if (!name || !email || !phone || !message) {
             res.status(400).json({
                 success: false,
@@ -1112,6 +1116,8 @@ app.post("/api/contact/submit", (req, res) => {
             phone: cleanPhone,
             subject: subject ? String(subject).trim() : "General Inquiry",
             message: String(message).trim(),
+            city: city ? String(city).trim() : undefined,
+            district: district ? String(district).trim() : undefined,
             status: "UNREAD",
             createdAt: new Date().toISOString(),
         };
@@ -1276,7 +1282,7 @@ app.get(["/api/donation/next-number", "/api/donations/next-number"], async (_req
 // POST /api/donation - Create donation entry
 app.post(["/api/donation", "/api/donations", "/api/donation/create"], async (req, res) => {
     try {
-        const { name, mobileNo, city, amount, amountInWords, paymentScreenshot, date } = req.body;
+        const { name, mobileNo, city, district, amount, amountInWords, paymentScreenshot, date } = req.body;
         if (!name || !mobileNo || !city || !amount) {
             res.status(400).json({ success: false, error: "Please provide all required fields (Name, Mobile, City, Amount)." });
             return;
@@ -1296,6 +1302,7 @@ app.post(["/api/donation", "/api/donations", "/api/donation/create"], async (req
                             name: String(name).trim(),
                             mobileNo: String(mobileNo).trim(),
                             city: String(city).trim(),
+                            district: district ? String(district).trim() : "अमरावती",
                             amount: parseInt(String(amount), 10) || 0,
                             amountInWords: amountInWords || "",
                             paymentScreenshot: paymentScreenshot || null,
@@ -1315,6 +1322,7 @@ app.post(["/api/donation", "/api/donations", "/api/donation/create"], async (req
                 name: String(name).trim(),
                 mobileNo: String(mobileNo).trim(),
                 city: String(city).trim(),
+                district: district ? String(district).trim() : "अमरावती",
                 amount: parseInt(String(amount), 10) || 0,
                 amountInWords: amountInWords || "",
                 paymentScreenshot: paymentScreenshot || null,
@@ -1775,6 +1783,8 @@ const loadAdsFromFile = () => {
             imageUrl: "/mptmm.png",
             adLink: "https://mptmamravati.org/registration",
             socialLinks: {
+                phone: "+919876543210",
+                visitUs: "https://mptmamravati.org/contact-us",
                 whatsapp: "https://wa.me/919876543210?text=Hello%20MPTM%20Amravati",
                 facebook: "https://facebook.com",
                 instagram: "https://instagram.com",
@@ -1794,6 +1804,8 @@ const loadAdsFromFile = () => {
             imageUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
             adLink: "https://mptmamravati.org",
             socialLinks: {
+                phone: "+919876543210",
+                visitUs: "https://mptmamravati.org/contact-us",
                 whatsapp: "https://wa.me/919876543210",
                 facebook: "https://facebook.com",
                 instagram: "https://instagram.com",
@@ -1839,6 +1851,27 @@ app.get(["/api/ads/active", "/ads/active"], (req, res) => {
     adsStore = loadAdsFromFile();
     const activeAds = adsStore.filter((ad) => ad.isActive);
     res.json({ success: true, data: activeAds });
+});
+// POST & PUT /api/ads/reorder - Save new display order of advertisements
+app.post(["/api/ads/reorder", "/ads/reorder"], (req, res) => {
+    try {
+        const { ads: newAdsOrder } = req.body;
+        if (!Array.isArray(newAdsOrder)) {
+            res.status(400).json({ success: false, error: "Invalid array of ads provided" });
+            return;
+        }
+        adsStore = newAdsOrder;
+        saveAdsToFile(adsStore);
+        res.json({
+            success: true,
+            message: "Advertisement sequence updated successfully!",
+            data: adsStore
+        });
+    }
+    catch (error) {
+        console.error("Reorder Ads Error:", error);
+        res.status(500).json({ success: false, error: "Server Error: Failed to save ad order." });
+    }
 });
 // POST /api/ads - Create a new ad
 app.post(["/api/ads", "/ads"], (req, res) => {
