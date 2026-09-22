@@ -1364,8 +1364,14 @@ interface DonationRecordItem {
     receiptNo: string;
     name: string;
     mobileNo: string;
+    address?: string | null;
+    gaav?: string | null;
+    taluka?: string | null;
     city: string;
-    district?: string;
+    district?: string | null;
+    state?: string | null;
+    country?: string | null;
+    pincode?: string | null;
     amount: number;
     amountInWords: string;
     paymentScreenshot?: string | null;
@@ -1465,10 +1471,10 @@ app.get(["/api/donation/next-number", "/api/donations/next-number"], async (_req
 // POST /api/donation - Create donation entry
 app.post(["/api/donation", "/api/donations", "/api/donation/create"], async (req: Request, res: Response) => {
     try {
-        const { name, mobileNo, city, district, amount, amountInWords, paymentScreenshot, date } = req.body;
+        const { name, mobileNo, address, gaav, taluka, city, district, state, country, pincode, amount, amountInWords, paymentScreenshot, date } = req.body;
 
-        if (!name || !mobileNo || !city || !amount) {
-            res.status(400).json({ success: false, error: "Please provide all required fields (Name, Mobile, City, Amount)." });
+        if (!name || !mobileNo || !amount) {
+            res.status(400).json({ success: false, error: "Please provide all required fields (Name, Mobile, Amount)." });
             return;
         }
 
@@ -1488,8 +1494,14 @@ app.post(["/api/donation", "/api/donations", "/api/donation/create"], async (req
                             receiptNo,
                             name: String(name).trim(),
                             mobileNo: String(mobileNo).trim(),
-                            city: String(city).trim(),
+                            address: address ? String(address).trim() : null,
+                            gaav: gaav ? String(gaav).trim() : null,
+                            taluka: taluka ? String(taluka).trim() : null,
+                            city: city ? String(city).trim() : "अमरावती",
                             district: district ? String(district).trim() : "अमरावती",
+                            state: state ? String(state).trim() : "महाराष्ट्र",
+                            country: country ? String(country).trim() : "भारत",
+                            pincode: pincode ? String(pincode).trim() : null,
                             amount: parseInt(String(amount), 10) || 0,
                             amountInWords: amountInWords || "",
                             paymentScreenshot: paymentScreenshot || null,
@@ -1508,8 +1520,14 @@ app.post(["/api/donation", "/api/donations", "/api/donation/create"], async (req
                 receiptNo,
                 name: String(name).trim(),
                 mobileNo: String(mobileNo).trim(),
-                city: String(city).trim(),
+                address: address ? String(address).trim() : null,
+                gaav: gaav ? String(gaav).trim() : null,
+                taluka: taluka ? String(taluka).trim() : null,
+                city: city ? String(city).trim() : "अमरावती",
                 district: district ? String(district).trim() : "अमरावती",
+                state: state ? String(state).trim() : "महाराष्ट्र",
+                country: country ? String(country).trim() : "भारत",
+                pincode: pincode ? String(pincode).trim() : null,
                 amount: parseInt(String(amount), 10) || 0,
                 amountInWords: amountInWords || "",
                 paymentScreenshot: paymentScreenshot || null,
@@ -1617,8 +1635,14 @@ interface ExecutiveMemberRecordItem {
     fullName: string;
     designation: string;
     mobileNo: string;
+    address?: string | null;
+    gaav?: string | null;
+    taluka?: string | null;
     city: string;
     district: string;
+    state?: string | null;
+    country?: string | null;
+    pincode?: string | null;
     photoUrl?: string | null;
     status: string;
     createdAt: string;
@@ -1743,7 +1767,7 @@ app.get(["/api/executives", "/api/executives/all", "/api/management/executives"]
 // POST /api/executives - Add new executive member
 app.post(["/api/executives", "/api/executives/create"], async (req: Request, res: Response) => {
     try {
-        const { fullName, designation, mobileNo, city, district, photoUrl, status } = req.body;
+        const { fullName, designation, mobileNo, address, gaav, taluka, city, district, state, country, pincode, photoUrl, status } = req.body;
 
         if (!fullName || !designation || !mobileNo) {
             res.status(400).json({ success: false, error: "कृपया पूर्ण नाव, पदनाम आणि मोबाईल नंबर प्रविष्ट करा." });
@@ -1764,8 +1788,14 @@ app.post(["/api/executives", "/api/executives/create"], async (req: Request, res
                             fullName: String(fullName).trim(),
                             designation: String(designation).trim(),
                             mobileNo: cleanMobile,
+                            address: address ? String(address).trim() : null,
+                            gaav: gaav ? String(gaav).trim() : null,
+                            taluka: taluka ? String(taluka).trim() : null,
                             city: city ? String(city).trim() : "अमरावती",
                             district: district ? String(district).trim() : "अमरावती",
+                            state: state ? String(state).trim() : "महाराष्ट्र",
+                            country: country ? String(country).trim() : "भारत",
+                            pincode: pincode ? String(pincode).trim() : null,
                             photoUrl: photoUrl || null,
                             status: status || "ACTIVE",
                         },
@@ -1782,8 +1812,14 @@ app.post(["/api/executives", "/api/executives/create"], async (req: Request, res
                 fullName: String(fullName).trim(),
                 designation: String(designation).trim(),
                 mobileNo: cleanMobile,
+                address: address ? String(address).trim() : null,
+                gaav: gaav ? String(gaav).trim() : null,
+                taluka: taluka ? String(taluka).trim() : null,
                 city: city ? String(city).trim() : "अमरावती",
                 district: district ? String(district).trim() : "अमरावती",
+                state: state ? String(state).trim() : "महाराष्ट्र",
+                country: country ? String(country).trim() : "भारत",
+                pincode: pincode ? String(pincode).trim() : null,
                 photoUrl: photoUrl || null,
                 status: status || "ACTIVE",
                 createdAt: nowIso,
@@ -1808,7 +1844,7 @@ app.post(["/api/executives", "/api/executives/create"], async (req: Request, res
 app.put("/api/executives/:id", async (req: Request, res: Response) => {
     try {
         const id = String(req.params.id);
-        const { fullName, designation, mobileNo, city, district, photoUrl, status } = req.body;
+        const { fullName, designation, mobileNo, address, gaav, taluka, city, district, state, country, pincode, photoUrl, status } = req.body;
         const nowIso = new Date().toISOString();
 
         let updated: ExecutiveMemberRecordItem | null = null;
@@ -1823,8 +1859,14 @@ app.put("/api/executives/:id", async (req: Request, res: Response) => {
                             ...(fullName && { fullName: String(fullName).trim() }),
                             ...(designation && { designation: String(designation).trim() }),
                             ...(mobileNo && { mobileNo: String(mobileNo).replace(/\D/g, "").slice(0, 10) }),
+                            ...(address !== undefined && { address: address ? String(address).trim() : null }),
+                            ...(gaav !== undefined && { gaav: gaav ? String(gaav).trim() : null }),
+                            ...(taluka !== undefined && { taluka: taluka ? String(taluka).trim() : null }),
                             ...(city && { city: String(city).trim() }),
                             ...(district && { district: String(district).trim() }),
+                            ...(state !== undefined && { state: state ? String(state).trim() : null }),
+                            ...(country !== undefined && { country: country ? String(country).trim() : null }),
+                            ...(pincode !== undefined && { pincode: pincode ? String(pincode).trim() : null }),
                             ...(photoUrl !== undefined && { photoUrl }),
                             ...(status && { status }),
                         },
@@ -1842,8 +1884,14 @@ app.put("/api/executives/:id", async (req: Request, res: Response) => {
                 ...(fullName && { fullName: String(fullName).trim() }),
                 ...(designation && { designation: String(designation).trim() }),
                 ...(mobileNo && { mobileNo: String(mobileNo).replace(/\D/g, "").slice(0, 10) }),
+                ...(address !== undefined && { address: address ? String(address).trim() : null }),
+                ...(gaav !== undefined && { gaav: gaav ? String(gaav).trim() : null }),
+                ...(taluka !== undefined && { taluka: taluka ? String(taluka).trim() : null }),
                 ...(city && { city: String(city).trim() }),
                 ...(district && { district: String(district).trim() }),
+                ...(state !== undefined && { state: state ? String(state).trim() : null }),
+                ...(country !== undefined && { country: country ? String(country).trim() : null }),
+                ...(pincode !== undefined && { pincode: pincode ? String(pincode).trim() : null }),
                 ...(photoUrl !== undefined && { photoUrl }),
                 ...(status && { status }),
                 updatedAt: nowIso,

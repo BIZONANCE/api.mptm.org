@@ -67,8 +67,14 @@ model Donation {
   receiptNo         String   @unique
   name              String
   mobileNo          String
-  city              String
+  address           String?
+  gaav              String?
+  taluka            String?
+  city              String?  @default("अमरावती")
   district          String?  @default("अमरावती")
+  state             String?  @default("महाराष्ट्र")
+  country           String?  @default("भारत")
+  pincode           String?
   amount            Int
   amountInWords     String
   paymentScreenshot String?
@@ -82,8 +88,14 @@ model ExecutiveMember {
   fullName    String
   designation String
   mobileNo    String
-  city        String
-  district    String
+  address     String?
+  gaav        String?
+  taluka      String?
+  city        String?  @default("अमरावती")
+  district    String?  @default("अमरावती")
+  state       String?  @default("महाराष्ट्र")
+  country     String?  @default("भारत")
+  pincode     String?
   photoUrl    String?
   status      String   @default("ACTIVE")
   createdAt   DateTime @default(now())
