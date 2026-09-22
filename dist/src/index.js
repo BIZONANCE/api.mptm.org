@@ -1774,48 +1774,7 @@ const loadAdsFromFile = () => {
             console.error("Error reading ads file from", p, e);
         }
     }
-    const defaultAds = [
-        {
-            id: "ad_101",
-            title: "महाराष्ट्र प्रांतिक तैलिक महासभा – विशेष नोंदणी अभियान २०२६",
-            subtitle: "अमरावती विभागातील सर्व तैलिक बांधवांसाठी महत्त्वाची सूचना",
-            mediaType: "image",
-            imageUrl: "/mptmm.png",
-            adLink: "https://mptmamravati.org/registration",
-            socialLinks: {
-                phone: "+919876543210",
-                visitUs: "https://mptmamravati.org/contact-us",
-                whatsapp: "https://wa.me/919876543210?text=Hello%20MPTM%20Amravati",
-                facebook: "https://facebook.com",
-                instagram: "https://instagram.com",
-                youtube: "https://youtube.com",
-                twitter: "https://x.com",
-                website: "https://mptmamravati.org"
-            },
-            isActive: true,
-            createdAt: new Date().toISOString()
-        },
-        {
-            id: "ad_102_video_demo",
-            title: "महाराष्ट्र प्रांतिक तैलिक महासभा (व्हीडिओ जाहिरात)",
-            subtitle: "अमरावती विभागातील सर्व तैलिक बांधवांसाठी व्हीडिओ जाहिरात",
-            mediaType: "video",
-            videoUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
-            imageUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
-            adLink: "https://mptmamravati.org",
-            socialLinks: {
-                phone: "+919876543210",
-                visitUs: "https://mptmamravati.org/contact-us",
-                whatsapp: "https://wa.me/919876543210",
-                facebook: "https://facebook.com",
-                instagram: "https://instagram.com",
-                youtube: "https://youtube.com",
-                website: "https://mptmamravati.org"
-            },
-            isActive: true,
-            createdAt: new Date().toISOString()
-        }
-    ];
+    const defaultAds = [];
     try {
         const targetPath = getAdsFilePath();
         fs_1.default.writeFileSync(targetPath, JSON.stringify(defaultAds, null, 2), "utf-8");
