@@ -398,13 +398,15 @@ app.get("/api/next-numbers", async (req: Request, res: Response) => {
 // GET /api/register - Fetch all registrations
 app.get("/api/register", async (_req: Request, res: Response) => {
     try {
-        const registrations = await prisma.memberRegistration.findMany({
-            orderBy: { createdAt: "desc" },
-            include: {
-                mainMembers: true,
-                familyMembers: true,
-            },
-        });
+        const registrations = await withDbRetry(() =>
+            prisma.memberRegistration.findMany({
+                orderBy: { createdAt: "desc" },
+                include: {
+                    mainMembers: true,
+                    familyMembers: true,
+                },
+            })
+        );
 
         res.json({
             success: true,
@@ -509,45 +511,52 @@ app.post("/api/register", async (req: Request, res: Response) => {
         const parsedFee = parseInt(formData.registrationFee, 10);
         const feeNumber = isNaN(parsedFee) || parsedFee < 101 ? 101 : parsedFee;
 
-        const registration = await prisma.memberRegistration.create({
-            data: {
-                receiptNo: formData.receiptNo,
-                date: formatDateToDDMMYYYY(formData.date),
-                registrationFee: feeNumber,
-                amountInWords: formData.amountInWords || "",
-                address: formData.address || "",
-                city: formData.city ? String(formData.city).trim() : "अमरावती",
-                district: formData.district ? String(formData.district).trim() : "अमरावती",
-                paymentMethod: formData.paymentMethod || "रोख",
-                paymentScreenshot: paymentScreenshot || null,
-                referredBy: formData.referredBy || req.body.referredBy || null,
-                mainMembers: {
-                    create: mainMembers.map((m: { srNo: number; memberNo: string; fullName: string; mobileNo: string; prabhagNo: string }) => ({
-                        srNo: m.srNo,
-                        memberNo: m.memberNo || "",
-                        fullName: m.fullName || "",
-                        mobileNo: m.mobileNo || "",
-                        prabhagNo: m.prabhagNo || "",
-                    })),
-                },
-                familyMembers: {
-                    create: familyMembers
-                        .filter((f: { name: string }) => f.name.trim() !== "")
-                        .map((f: { srNo: number; name: string; relation: string; dob: string; occupation: string; mobile: string }) => ({
-                            srNo: f.srNo,
-                            name: f.name || "",
-                            relation: f.relation || "",
-                            dob: formatDateToDDMMYYYY(f.dob),
-                            occupation: f.occupation || "",
-                            mobile: f.mobile || "",
+        const registration = await withDbRetry(() =>
+            prisma.memberRegistration.create({
+                data: {
+                    receiptNo: formData.receiptNo,
+                    date: formatDateToDDMMYYYY(formData.date),
+                    registrationFee: feeNumber,
+                    amountInWords: formData.amountInWords || "",
+                    address: formData.address || "",
+                    gaav: formData.gaav ? String(formData.gaav).trim() : null,
+                    taluka: formData.taluka ? String(formData.taluka).trim() : null,
+                    city: formData.city ? String(formData.city).trim() : "अमरावती",
+                    district: formData.district ? String(formData.district).trim() : "अमरावती",
+                    state: formData.state ? String(formData.state).trim() : "महाराष्ट्र",
+                    country: formData.country ? String(formData.country).trim() : "भारत",
+                    pincode: formData.pincode ? String(formData.pincode).trim() : null,
+                    paymentMethod: formData.paymentMethod || "रोख",
+                    paymentScreenshot: paymentScreenshot || null,
+                    referredBy: formData.referredBy || req.body.referredBy || null,
+                    mainMembers: {
+                        create: mainMembers.map((m: { srNo: number; memberNo: string; fullName: string; mobileNo: string; prabhagNo: string }) => ({
+                            srNo: m.srNo,
+                            memberNo: m.memberNo || "",
+                            fullName: m.fullName || "",
+                            mobileNo: m.mobileNo || "",
+                            prabhagNo: m.prabhagNo || "",
                         })),
+                    },
+                    familyMembers: {
+                        create: familyMembers
+                            .filter((f: { name: string }) => f.name.trim() !== "")
+                            .map((f: { srNo: number; name: string; relation: string; dob: string; occupation: string; mobile: string }) => ({
+                                srNo: f.srNo,
+                                name: f.name || "",
+                                relation: f.relation || "",
+                                dob: formatDateToDDMMYYYY(f.dob),
+                                occupation: f.occupation || "",
+                                mobile: f.mobile || "",
+                            })),
+                    },
                 },
-            },
-            include: {
-                mainMembers: true,
-                familyMembers: true,
-            },
-        });
+                include: {
+                    mainMembers: true,
+                    familyMembers: true,
+                },
+            })
+        );
 
         res.json({
             success: true,

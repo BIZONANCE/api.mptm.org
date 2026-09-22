@@ -23,8 +23,13 @@ model MemberRegistration {
   registrationFee   Int
   amountInWords     String
   address           String
+  gaav              String?
+  taluka            String?
   city              String?        @default("अमरावती")
   district          String?        @default("अमरावती")
+  state             String?        @default("महाराष्ट्र")
+  country           String?        @default("भारत")
+  pincode           String?
   paymentMethod     String
   paymentScreenshot String?
   referredBy        String?
