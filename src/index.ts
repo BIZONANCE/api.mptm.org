@@ -1654,7 +1654,7 @@ const EXECUTIVES_FILE_PATH = path.join(__dirname, "../executive_members.json");
 const defaultExecutives: ExecutiveMemberRecordItem[] = [
     {
         id: "exec_101",
-        fullName: "राजस बाळकृष्ण गुळवाडे",
+        fullName: "राजस बाळकृष्ण गुलवाडे",
         designation: "विभागीय अध्यक्ष",
         mobileNo: "9595707707",
         city: "अमरावती",

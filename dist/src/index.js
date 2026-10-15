@@ -497,13 +497,13 @@ app.post("/api/register", async (req, res) => {
                     create: familyMembers
                         .filter((f) => f.name.trim() !== "")
                         .map((f) => ({
-                        srNo: f.srNo,
-                        name: f.name || "",
-                        relation: f.relation || "",
-                        dob: formatDateToDDMMYYYY(f.dob),
-                        occupation: f.occupation || "",
-                        mobile: f.mobile || "",
-                    })),
+                            srNo: f.srNo,
+                            name: f.name || "",
+                            relation: f.relation || "",
+                            dob: formatDateToDDMMYYYY(f.dob),
+                            occupation: f.occupation || "",
+                            mobile: f.mobile || "",
+                        })),
                 },
             },
             include: {
@@ -1423,7 +1423,7 @@ const EXECUTIVES_FILE_PATH = path_1.default.join(__dirname, "../executive_member
 const defaultExecutives = [
     {
         id: "exec_101",
-        fullName: "राजस बाळकृष्ण गुळवाडे",
+        fullName: "राजस बाळकृष्ण गुलवाडे",
         designation: "विभागीय अध्यक्ष",
         mobileNo: "9595707707",
         city: "अमरावती",
