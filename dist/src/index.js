@@ -373,13 +373,13 @@ app.get("/api/next-numbers", async (req, res) => {
 // GET /api/register - Fetch all registrations
 app.get("/api/register", async (_req, res) => {
     try {
-        const registrations = await prisma_1.prisma.memberRegistration.findMany({
+        const registrations = await (0, prisma_1.withDbRetry)(() => prisma_1.prisma.memberRegistration.findMany({
             orderBy: { createdAt: "desc" },
             include: {
                 mainMembers: true,
                 familyMembers: true,
             },
-        });
+        }));
         res.json({
             success: true,
             data: registrations,
@@ -472,15 +472,20 @@ app.post("/api/register", async (req, res) => {
         }
         const parsedFee = parseInt(formData.registrationFee, 10);
         const feeNumber = isNaN(parsedFee) || parsedFee < 101 ? 101 : parsedFee;
-        const registration = await prisma_1.prisma.memberRegistration.create({
+        const registration = await (0, prisma_1.withDbRetry)(() => prisma_1.prisma.memberRegistration.create({
             data: {
                 receiptNo: formData.receiptNo,
                 date: formatDateToDDMMYYYY(formData.date),
                 registrationFee: feeNumber,
                 amountInWords: formData.amountInWords || "",
                 address: formData.address || "",
+                gaav: formData.gaav ? String(formData.gaav).trim() : null,
+                taluka: formData.taluka ? String(formData.taluka).trim() : null,
                 city: formData.city ? String(formData.city).trim() : "अमरावती",
                 district: formData.district ? String(formData.district).trim() : "अमरावती",
+                state: formData.state ? String(formData.state).trim() : "महाराष्ट्र",
+                country: formData.country ? String(formData.country).trim() : "भारत",
+                pincode: formData.pincode ? String(formData.pincode).trim() : null,
                 paymentMethod: formData.paymentMethod || "रोख",
                 paymentScreenshot: paymentScreenshot || null,
                 referredBy: formData.referredBy || req.body.referredBy || null,
@@ -497,20 +502,20 @@ app.post("/api/register", async (req, res) => {
                     create: familyMembers
                         .filter((f) => f.name.trim() !== "")
                         .map((f) => ({
-                            srNo: f.srNo,
-                            name: f.name || "",
-                            relation: f.relation || "",
-                            dob: formatDateToDDMMYYYY(f.dob),
-                            occupation: f.occupation || "",
-                            mobile: f.mobile || "",
-                        })),
+                        srNo: f.srNo,
+                        name: f.name || "",
+                        relation: f.relation || "",
+                        dob: formatDateToDDMMYYYY(f.dob),
+                        occupation: f.occupation || "",
+                        mobile: f.mobile || "",
+                    })),
                 },
             },
             include: {
                 mainMembers: true,
                 familyMembers: true,
             },
-        });
+        }));
         res.json({
             success: true,
             message: "सदस्य नोंदणी यशस्वीरित्या जतन झाली!",
@@ -980,6 +985,7 @@ const CONTACT_MESSAGES_FILE = path_1.default.join(__dirname, "../contact_message
 const defaultContactInfo = {
     address: "Maharashtra Prantik Tailik Mahasabha, Amravati Division, Amravati, Maharashtra, India",
     phone: "9876543210",
+    alternatePhone: "",
     email: "info@mptmamravati.org",
     hours: "Monday - Saturday: 10:00 AM - 6:00 PM",
 };
@@ -1071,10 +1077,11 @@ app.get("/api/contact/info", (req, res) => {
 // PUT /api/contact/info - Update contact information from Super Admin Dashboard
 app.put("/api/contact/info", (req, res) => {
     try {
-        const { address, phone, email, hours } = req.body;
+        const { address, phone, alternatePhone, email, hours } = req.body;
         contactInfoStore = {
             address: address !== undefined ? String(address).trim() : contactInfoStore.address,
             phone: phone !== undefined ? String(phone).replace(/\D/g, "").slice(0, 10) : contactInfoStore.phone,
+            alternatePhone: alternatePhone !== undefined ? String(alternatePhone).replace(/\D/g, "").slice(0, 10) : (contactInfoStore.alternatePhone || ""),
             email: email !== undefined ? String(email).trim().toLowerCase() : contactInfoStore.email,
             hours: hours !== undefined ? String(hours).trim() : contactInfoStore.hours,
         };
@@ -1282,9 +1289,9 @@ app.get(["/api/donation/next-number", "/api/donations/next-number"], async (_req
 // POST /api/donation - Create donation entry
 app.post(["/api/donation", "/api/donations", "/api/donation/create"], async (req, res) => {
     try {
-        const { name, mobileNo, city, district, amount, amountInWords, paymentScreenshot, date } = req.body;
-        if (!name || !mobileNo || !city || !amount) {
-            res.status(400).json({ success: false, error: "Please provide all required fields (Name, Mobile, City, Amount)." });
+        const { name, mobileNo, address, gaav, taluka, city, district, state, country, pincode, amount, amountInWords, paymentScreenshot, date } = req.body;
+        if (!name || !mobileNo || !amount) {
+            res.status(400).json({ success: false, error: "Please provide all required fields (Name, Mobile, Amount)." });
             return;
         }
         const now = new Date();
@@ -1301,8 +1308,14 @@ app.post(["/api/donation", "/api/donations", "/api/donation/create"], async (req
                             receiptNo,
                             name: String(name).trim(),
                             mobileNo: String(mobileNo).trim(),
-                            city: String(city).trim(),
+                            address: address ? String(address).trim() : null,
+                            gaav: gaav ? String(gaav).trim() : null,
+                            taluka: taluka ? String(taluka).trim() : null,
+                            city: city ? String(city).trim() : "अमरावती",
                             district: district ? String(district).trim() : "अमरावती",
+                            state: state ? String(state).trim() : "महाराष्ट्र",
+                            country: country ? String(country).trim() : "भारत",
+                            pincode: pincode ? String(pincode).trim() : null,
                             amount: parseInt(String(amount), 10) || 0,
                             amountInWords: amountInWords || "",
                             paymentScreenshot: paymentScreenshot || null,
@@ -1321,8 +1334,14 @@ app.post(["/api/donation", "/api/donations", "/api/donation/create"], async (req
                 receiptNo,
                 name: String(name).trim(),
                 mobileNo: String(mobileNo).trim(),
-                city: String(city).trim(),
+                address: address ? String(address).trim() : null,
+                gaav: gaav ? String(gaav).trim() : null,
+                taluka: taluka ? String(taluka).trim() : null,
+                city: city ? String(city).trim() : "अमरावती",
                 district: district ? String(district).trim() : "अमरावती",
+                state: state ? String(state).trim() : "महाराष्ट्र",
+                country: country ? String(country).trim() : "भारत",
+                pincode: pincode ? String(pincode).trim() : null,
                 amount: parseInt(String(amount), 10) || 0,
                 amountInWords: amountInWords || "",
                 paymentScreenshot: paymentScreenshot || null,
@@ -1535,7 +1554,7 @@ app.get(["/api/executives", "/api/executives/all", "/api/management/executives"]
 // POST /api/executives - Add new executive member
 app.post(["/api/executives", "/api/executives/create"], async (req, res) => {
     try {
-        const { fullName, designation, mobileNo, city, district, photoUrl, status } = req.body;
+        const { fullName, designation, mobileNo, address, gaav, taluka, city, district, state, country, pincode, photoUrl, status } = req.body;
         if (!fullName || !designation || !mobileNo) {
             res.status(400).json({ success: false, error: "कृपया पूर्ण नाव, पदनाम आणि मोबाईल नंबर प्रविष्ट करा." });
             return;
@@ -1552,8 +1571,14 @@ app.post(["/api/executives", "/api/executives/create"], async (req, res) => {
                             fullName: String(fullName).trim(),
                             designation: String(designation).trim(),
                             mobileNo: cleanMobile,
+                            address: address ? String(address).trim() : null,
+                            gaav: gaav ? String(gaav).trim() : null,
+                            taluka: taluka ? String(taluka).trim() : null,
                             city: city ? String(city).trim() : "अमरावती",
                             district: district ? String(district).trim() : "अमरावती",
+                            state: state ? String(state).trim() : "महाराष्ट्र",
+                            country: country ? String(country).trim() : "भारत",
+                            pincode: pincode ? String(pincode).trim() : null,
                             photoUrl: photoUrl || null,
                             status: status || "ACTIVE",
                         },
@@ -1570,8 +1595,14 @@ app.post(["/api/executives", "/api/executives/create"], async (req, res) => {
                 fullName: String(fullName).trim(),
                 designation: String(designation).trim(),
                 mobileNo: cleanMobile,
+                address: address ? String(address).trim() : null,
+                gaav: gaav ? String(gaav).trim() : null,
+                taluka: taluka ? String(taluka).trim() : null,
                 city: city ? String(city).trim() : "अमरावती",
                 district: district ? String(district).trim() : "अमरावती",
+                state: state ? String(state).trim() : "महाराष्ट्र",
+                country: country ? String(country).trim() : "भारत",
+                pincode: pincode ? String(pincode).trim() : null,
                 photoUrl: photoUrl || null,
                 status: status || "ACTIVE",
                 createdAt: nowIso,
@@ -1595,7 +1626,7 @@ app.post(["/api/executives", "/api/executives/create"], async (req, res) => {
 app.put("/api/executives/:id", async (req, res) => {
     try {
         const id = String(req.params.id);
-        const { fullName, designation, mobileNo, city, district, photoUrl, status } = req.body;
+        const { fullName, designation, mobileNo, address, gaav, taluka, city, district, state, country, pincode, photoUrl, status } = req.body;
         const nowIso = new Date().toISOString();
         let updated = null;
         const execModel = getExecutivePrismaModel();
@@ -1608,8 +1639,14 @@ app.put("/api/executives/:id", async (req, res) => {
                             ...(fullName && { fullName: String(fullName).trim() }),
                             ...(designation && { designation: String(designation).trim() }),
                             ...(mobileNo && { mobileNo: String(mobileNo).replace(/\D/g, "").slice(0, 10) }),
+                            ...(address !== undefined && { address: address ? String(address).trim() : null }),
+                            ...(gaav !== undefined && { gaav: gaav ? String(gaav).trim() : null }),
+                            ...(taluka !== undefined && { taluka: taluka ? String(taluka).trim() : null }),
                             ...(city && { city: String(city).trim() }),
                             ...(district && { district: String(district).trim() }),
+                            ...(state !== undefined && { state: state ? String(state).trim() : null }),
+                            ...(country !== undefined && { country: country ? String(country).trim() : null }),
+                            ...(pincode !== undefined && { pincode: pincode ? String(pincode).trim() : null }),
                             ...(photoUrl !== undefined && { photoUrl }),
                             ...(status && { status }),
                         },
@@ -1627,8 +1664,14 @@ app.put("/api/executives/:id", async (req, res) => {
                 ...(fullName && { fullName: String(fullName).trim() }),
                 ...(designation && { designation: String(designation).trim() }),
                 ...(mobileNo && { mobileNo: String(mobileNo).replace(/\D/g, "").slice(0, 10) }),
+                ...(address !== undefined && { address: address ? String(address).trim() : null }),
+                ...(gaav !== undefined && { gaav: gaav ? String(gaav).trim() : null }),
+                ...(taluka !== undefined && { taluka: taluka ? String(taluka).trim() : null }),
                 ...(city && { city: String(city).trim() }),
                 ...(district && { district: String(district).trim() }),
+                ...(state !== undefined && { state: state ? String(state).trim() : null }),
+                ...(country !== undefined && { country: country ? String(country).trim() : null }),
+                ...(pincode !== undefined && { pincode: pincode ? String(pincode).trim() : null }),
                 ...(photoUrl !== undefined && { photoUrl }),
                 ...(status && { status }),
                 updatedAt: nowIso,
