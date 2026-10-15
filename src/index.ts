@@ -1105,6 +1105,7 @@ app.delete("/api/career/applications/:id", (req: Request, res: Response) => {
 interface ContactInfoData {
     address: string;
     phone: string;
+    alternatePhone?: string;
     email: string;
     hours: string;
 }
@@ -1128,6 +1129,7 @@ const CONTACT_MESSAGES_FILE = path.join(__dirname, "../contact_messages.json");
 const defaultContactInfo: ContactInfoData = {
     address: "Maharashtra Prantik Tailik Mahasabha, Amravati Division, Amravati, Maharashtra, India",
     phone: "9876543210",
+    alternatePhone: "",
     email: "info@mptmamravati.org",
     hours: "Monday - Saturday: 10:00 AM - 6:00 PM",
 };
@@ -1221,10 +1223,11 @@ app.get("/api/contact/info", (req: Request, res: Response) => {
 // PUT /api/contact/info - Update contact information from Super Admin Dashboard
 app.put("/api/contact/info", (req: Request, res: Response) => {
     try {
-        const { address, phone, email, hours } = req.body;
+        const { address, phone, alternatePhone, email, hours } = req.body;
         contactInfoStore = {
             address: address !== undefined ? String(address).trim() : contactInfoStore.address,
             phone: phone !== undefined ? String(phone).replace(/\D/g, "").slice(0, 10) : contactInfoStore.phone,
+            alternatePhone: alternatePhone !== undefined ? String(alternatePhone).replace(/\D/g, "").slice(0, 10) : (contactInfoStore.alternatePhone || ""),
             email: email !== undefined ? String(email).trim().toLowerCase() : contactInfoStore.email,
             hours: hours !== undefined ? String(hours).trim() : contactInfoStore.hours,
         };
