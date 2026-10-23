@@ -46,23 +46,6 @@ const corsOptions = {
         }
     },
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: [
-        "Content-Type",
-        "Authorization",
-        "X-Requested-With",
-        "Idempotency-Key",
-        "idempotency-key",
-        "x-user-email",
-        "x-user-role",
-        "X-User-Email",
-        "X-User-Role",
-        "Cache-Control",
-        "Pragma",
-        "X-Test-Payment",
-        "x-test-payment",
-        "X-Test-Pin",
-        "x-test-pin"
-    ],
     credentials: true,
 };
 

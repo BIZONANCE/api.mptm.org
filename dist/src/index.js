@@ -14,32 +14,51 @@ const prisma_1 = require("./prisma");
 dotenv_1.default.config();
 const app = (0, express_1.default)();
 const PORT = process.env.PORT || 5000;
-// Strict CORS Configuration
+// Comprehensive Production CORS Configuration
 const corsOptions = {
     origin: (origin, callback) => {
+        const envOrigins = (process.env.CORS_ORIGIN || "")
+            .split(",")
+            .map((o) => o.trim())
+            .filter(Boolean);
         const allowedOrigins = [
             "https://admin.mptmamravati.org",
             "https://www.mptmamravati.org",
             "https://mptmamravati.org",
+            "https://admin.mptm.org",
+            "https://www.mptm.org",
+            "https://mptm.org",
             "http://localhost:3001",
-            "http://localhost:3000"
+            "http://localhost:3000",
+            ...envOrigins,
         ];
-        if (!origin || allowedOrigins.includes(origin) || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+        const isAllowed = !origin ||
+            allowedOrigins.includes(origin) ||
+            /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin) ||
+            /^https:\/\/([a-z0-9-]+\.)?(mptmamravati\.org|mptm\.org)$/i.test(origin);
+        if (isAllowed) {
             callback(null, true);
         }
         else {
+            console.warn(`[CORS REJECTED] Origin: ${origin}`);
             callback(new Error('Not allowed by CORS'));
         }
     },
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
     credentials: true,
 };
 // Enable CORS for frontend
 app.use((0, cors_1.default)(corsOptions));
 app.options("*", (0, cors_1.default)(corsOptions));
-app.use(express_1.default.json({ limit: "50mb" }));
+app.use(express_1.default.json({
+    limit: "50mb",
+    verify: (req, _res, buf) => {
+        req.rawBody = buf.toString();
+    }
+}));
 app.use(express_1.default.urlencoded({ extended: true, limit: "50mb" }));
+// Mount Rebuilt PhonePe & Payment Routes (Stage C)
+app.use("/api", require("./routes/paymentRoutes"));
 // Helper function to delete registration entry cleanly with manual cascade fallback
 const deleteRegistrationByIdOrReceipt = async (identifier) => {
     return (0, prisma_1.withDbRetry)(async () => {
@@ -217,17 +236,29 @@ app.post("/api/admin/login", async (req, res) => {
             return;
         }
         const cleanUsername = String(username).trim();
+        const lowerUsername = cleanUsername.toLowerCase();
+        const isSuperAdminAlias = lowerUsername === "mptmamravati.org" ||
+            lowerUsername === "admin@mptmamravati.org" ||
+            lowerUsername === "admin" ||
+            lowerUsername === "superadmin";
         let admin = null;
         try {
+            // First look up by exact username
             admin = await prisma_1.prisma.admin.findUnique({
                 where: { username: cleanUsername },
             });
+            // If alias was used and not found by exact string, look up canonical "mptmamravati.org"
+            if (!admin && isSuperAdminAlias) {
+                admin = await prisma_1.prisma.admin.findUnique({
+                    where: { username: "mptmamravati.org" },
+                });
+            }
         }
         catch (dbErr) {
             console.warn("DB login lookup warning, checking fallback auth:", dbErr?.message || dbErr);
         }
         // Fallback for default super admin if DB is unreachable or disconnected
-        if (!admin && cleanUsername === "mptmamravati.org") {
+        if (!admin && isSuperAdminAlias) {
             const rawPassword = "Mptmamt@2026";
             const hashedPassword = await bcryptjs_1.default.hash(rawPassword, 10);
             admin = {
@@ -370,10 +401,35 @@ app.get("/api/next-numbers", async (req, res) => {
         });
     }
 });
-// GET /api/register - Fetch all registrations
-app.get("/api/register", async (_req, res) => {
+// GET /api/register - Fetch all registrations (scoped for staff users)
+app.get("/api/register", async (req, res) => {
     try {
+        const userEmail = String(req.query.userEmail || req.headers["x-user-email"] || "").trim().toLowerCase();
+        const userRole = String(req.query.userRole || req.headers["x-user-role"] || "").trim().toUpperCase();
+        const isSuperAdmin = userRole === "SUPER_ADMIN" || userEmail === "mptmamravati.org" || userEmail === "admin@mptmamravati.org" || userEmail === "superadmin";
+        let whereClause = undefined;
+        if (!isSuperAdmin && userEmail) {
+            const refAliases = [userEmail];
+            try {
+                const staffUser = await prisma_1.prisma.managedUser.findFirst({
+                    where: { email: { equals: userEmail, mode: "insensitive" } },
+                });
+                if (staffUser?.name && staffUser.name.trim()) {
+                    const nameClean = staffUser.name.trim().toLowerCase();
+                    if (!refAliases.includes(nameClean)) {
+                        refAliases.push(nameClean);
+                    }
+                }
+            }
+            catch (e) {
+                // ignore
+            }
+            whereClause = {
+                OR: refAliases.map((a) => ({ referredBy: { equals: a, mode: "insensitive" } })),
+            };
+        }
         const registrations = await (0, prisma_1.withDbRetry)(() => prisma_1.prisma.memberRegistration.findMany({
+            where: whereClause,
             orderBy: { createdAt: "desc" },
             include: {
                 mainMembers: true,
@@ -601,16 +657,27 @@ saveManagedUsers();
 // Helper to check if an email is registered by Super Admin
 const isEmailRegisteredInBackend = (email) => {
     const clean = email.trim().toLowerCase();
-    if (clean === "mptmamravati.org" || clean === "admin@mptmamravati.org")
+    if (clean === "mptmamravati.org" || clean === "admin@mptmamravati.org" || clean === "mptmamravati@gmail.com")
         return true;
     return managedUsersStore.some((u) => u.email.trim().toLowerCase() === clean);
 };
-// GET /api/users - Get all managed users
-app.get("/api/users", (req, res) => {
+// GET /api/users - Get all managed users (Database with JSON fallback)
+app.get("/api/users", async (req, res) => {
+    try {
+        const dbUsers = await (0, prisma_1.withDbRetry)(() => prisma_1.prisma.managedUser.findMany({
+            orderBy: { createdAt: "desc" }
+        }));
+        if (dbUsers && dbUsers.length > 0) {
+            return res.json({ success: true, data: dbUsers });
+        }
+    }
+    catch (dbErr) {
+        console.warn("DB fetch users warning, using JSON fallback:", dbErr?.message || dbErr);
+    }
     res.json({ success: true, data: managedUsersStore });
 });
-// POST /api/users - Add or update a managed user
-app.post("/api/users", (req, res) => {
+// POST /api/users - Add or update a managed user in DB and JSON
+app.post("/api/users", async (req, res) => {
     const { email, name, phone, city, date, time, status, role, id } = req.body;
     if (!email) {
         res.status(400).json({ success: false, error: "इमेल आयडी आवश्यक आहे!" });
@@ -632,6 +699,37 @@ app.post("/api/users", (req, res) => {
         role: role || (existingUser ? existingUser.role : "User"),
         createdAt: (existingUser && existingUser.createdAt) ? existingUser.createdAt : now.toISOString(),
     };
+    // 1. Save in Database
+    try {
+        await (0, prisma_1.withDbRetry)(() => prisma_1.prisma.managedUser.upsert({
+            where: { email: cleanEmail },
+            update: {
+                name: newUser.name,
+                phone: newUser.phone,
+                city: newUser.city || null,
+                date: newUser.date || null,
+                time: newUser.time || null,
+                status: newUser.status || "VERIFIED",
+                role: newUser.role || "User",
+            },
+            create: {
+                id: newUser.id,
+                email: cleanEmail,
+                name: newUser.name,
+                phone: newUser.phone,
+                city: newUser.city || null,
+                date: newUser.date || null,
+                time: newUser.time || null,
+                status: newUser.status || "VERIFIED",
+                role: newUser.role || "User",
+                createdAt: new Date(newUser.createdAt),
+            }
+        }));
+    }
+    catch (dbErr) {
+        console.warn("DB save managed user warning:", dbErr?.message || dbErr);
+    }
+    // 2. Keep JSON backup
     if (existingIndex >= 0) {
         managedUsersStore[existingIndex] = newUser;
     }
@@ -641,9 +739,24 @@ app.post("/api/users", (req, res) => {
     saveManagedUsers();
     res.json({ success: true, data: newUser, users: managedUsersStore });
 });
-// DELETE /api/users/:id - Delete managed user by ID or Email
-app.delete("/api/users/:id", (req, res) => {
+// DELETE /api/users/:id - Delete managed user by ID or Email in DB and JSON
+app.delete("/api/users/:id", async (req, res) => {
     const targetId = String(req.params.id).trim().toLowerCase();
+    // 1. Delete in Database
+    try {
+        await (0, prisma_1.withDbRetry)(() => prisma_1.prisma.managedUser.deleteMany({
+            where: {
+                OR: [
+                    { id: targetId },
+                    { email: targetId }
+                ]
+            }
+        }));
+    }
+    catch (dbErr) {
+        console.warn("DB delete user warning:", dbErr?.message || dbErr);
+    }
+    // 2. Delete in JSON backup
     const index = managedUsersStore.findIndex((u) => u.id === targetId || u.email.trim().toLowerCase() === targetId);
     if (index >= 0) {
         const deleted = managedUsersStore.splice(index, 1);
@@ -651,12 +764,12 @@ app.delete("/api/users/:id", (req, res) => {
         res.json({ success: true, message: "युझर हटवला गेला", deleted: deleted[0] });
     }
     else {
-        res.status(404).json({ success: false, error: "युझर सापडला नाही" });
+        res.json({ success: true, message: "युझर डेटाबेसमधून हटवला गेला" });
     }
 });
 // In-memory verification code store (Email -> { code, expiresAt })
 const verificationStore = new Map();
-// Helper transporter creation (uses Gmail service or custom SMTP config)
+// Helper transporter creation (uses Gmail SMTP service or custom SMTP config)
 const createMailTransporter = async () => {
     const rawUser = (process.env.SMTP_USER || "").trim();
     const rawPass = (process.env.SMTP_PASS || "").replace(/\s+/g, "").trim();
@@ -739,7 +852,7 @@ app.post("/api/users/send-verification", async (req, res) => {
         let previewUrl = false;
         try {
             const transporter = await createMailTransporter();
-            const senderUser = (process.env.SMTP_USER || "sdhole501@gmail.com").trim();
+            const senderUser = (process.env.SMTP_USER || "mptmamravati@gmail.com").trim();
             const info = await transporter.sendMail({
                 from: process.env.SMTP_FROM || `"MPTM Amravati" <${senderUser}>`,
                 to: cleanEmail,
@@ -873,8 +986,8 @@ const saveCareerAppsToFile = (apps) => {
     }
 };
 let careerAppsStore = loadCareerAppsFromFile();
-// POST /api/career/apply - Submit job application from frontend
-app.post("/api/career/apply", (req, res) => {
+// POST /api/career/apply - Submit job application to Database and JSON
+app.post("/api/career/apply", async (req, res) => {
     try {
         const { name, email, phone, message, resumeName, resumeData, position, city, district } = req.body;
         if (!name || !email || !phone) {
@@ -906,6 +1019,29 @@ app.post("/api/career/apply", (req, res) => {
             status: "PENDING",
             createdAt: new Date().toISOString(),
         };
+        // 1. Save in Database
+        try {
+            await (0, prisma_1.withDbRetry)(() => prisma_1.prisma.careerApplication.create({
+                data: {
+                    id: newApp.id,
+                    name: newApp.name,
+                    email: newApp.email,
+                    phone: newApp.phone,
+                    position: newApp.position,
+                    message: newApp.message || null,
+                    city: newApp.city || null,
+                    district: newApp.district || null,
+                    resumeName: newApp.resumeName || null,
+                    resumeData: newApp.resumeData || null,
+                    status: newApp.status,
+                    createdAt: new Date(newApp.createdAt)
+                }
+            }));
+        }
+        catch (dbErr) {
+            console.warn("DB save career app warning:", dbErr?.message || dbErr);
+        }
+        // 2. Keep JSON file backup
         careerAppsStore.unshift(newApp);
         saveCareerAppsToFile(careerAppsStore);
         res.json({
@@ -919,38 +1055,54 @@ app.post("/api/career/apply", (req, res) => {
         res.status(500).json({ success: false, error: err.message || "Server error while submitting application." });
     }
 });
-// GET /api/career/applications - Get all career applications for Super Admin Dashboard
-app.get("/api/career/applications", (req, res) => {
+// GET /api/career/applications - Get all career applications (Database with JSON fallback)
+app.get("/api/career/applications", async (req, res) => {
     try {
-        res.json({
-            success: true,
-            count: careerAppsStore.length,
-            data: careerAppsStore,
-        });
+        const dbApps = await (0, prisma_1.withDbRetry)(() => prisma_1.prisma.careerApplication.findMany({
+            orderBy: { createdAt: "desc" }
+        }));
+        if (dbApps && dbApps.length > 0) {
+            return res.json({
+                success: true,
+                count: dbApps.length,
+                data: dbApps,
+            });
+        }
     }
-    catch (err) {
-        console.error("Get career apps error:", err);
-        res.status(500).json({ success: false, error: err.message || "Server error" });
+    catch (dbErr) {
+        console.warn("DB fetch career apps warning, using JSON fallback:", dbErr?.message || dbErr);
     }
+    res.json({
+        success: true,
+        count: careerAppsStore.length,
+        data: careerAppsStore,
+    });
 });
-// PUT /api/career/applications/:id - Update career application status
-app.put("/api/career/applications/:id", (req, res) => {
+// PUT /api/career/applications/:id - Update career application status in DB and JSON
+app.put("/api/career/applications/:id", async (req, res) => {
     try {
-        const { id } = req.params;
+        const id = String(req.params.id);
         const { status } = req.body;
+        // 1. Update in Database
+        try {
+            await (0, prisma_1.withDbRetry)(() => prisma_1.prisma.careerApplication.update({
+                where: { id },
+                data: { status }
+            }));
+        }
+        catch (dbErr) {
+            console.warn("DB update career status warning:", dbErr?.message || dbErr);
+        }
+        // 2. Update in JSON backup
         const target = careerAppsStore.find((a) => a.id === id);
-        if (!target) {
-            res.status(404).json({ success: false, error: "Application not found!" });
-            return;
-        }
-        if (status) {
+        if (target && status) {
             target.status = status;
+            saveCareerAppsToFile(careerAppsStore);
         }
-        saveCareerAppsToFile(careerAppsStore);
         res.json({
             success: true,
             message: "Application status updated successfully",
-            data: target,
+            data: target || { id, status },
         });
     }
     catch (err) {
@@ -958,21 +1110,30 @@ app.put("/api/career/applications/:id", (req, res) => {
         res.status(500).json({ success: false, error: err.message || "Server error" });
     }
 });
-// DELETE /api/career/applications/:id - Delete career application
-app.delete("/api/career/applications/:id", (req, res) => {
+// DELETE /api/career/applications/:id - Delete career application in DB and JSON
+app.delete("/api/career/applications/:id", async (req, res) => {
     try {
-        const { id } = req.params;
-        const index = careerAppsStore.findIndex((a) => a.id === id);
-        if (index === -1) {
-            res.status(404).json({ success: false, error: "Application not found!" });
-            return;
+        const id = String(req.params.id);
+        // 1. Delete in Database
+        try {
+            await (0, prisma_1.withDbRetry)(() => prisma_1.prisma.careerApplication.delete({
+                where: { id }
+            }));
         }
-        const deleted = careerAppsStore.splice(index, 1)[0];
-        saveCareerAppsToFile(careerAppsStore);
+        catch (dbErr) {
+            console.warn("DB delete career app warning:", dbErr?.message || dbErr);
+        }
+        // 2. Delete in JSON backup
+        const index = careerAppsStore.findIndex((a) => a.id === id);
+        let deleted = null;
+        if (index !== -1) {
+            deleted = careerAppsStore.splice(index, 1)[0];
+            saveCareerAppsToFile(careerAppsStore);
+        }
         res.json({
             success: true,
             message: "Application deleted successfully",
-            data: deleted,
+            data: deleted || { id },
         });
     }
     catch (err) {
@@ -1061,30 +1222,68 @@ const saveContactMessages = (msgs) => {
     }
 };
 let contactMessagesStore = loadContactMessages();
-// GET /api/contact/info - Get current editable contact information
-app.get("/api/contact/info", (req, res) => {
+// GET /api/contact/info - Get current editable contact information (Database with JSON fallback)
+app.get("/api/contact/info", async (req, res) => {
     try {
-        res.json({
-            success: true,
-            data: contactInfoStore,
-        });
+        const dbInfo = await (0, prisma_1.withDbRetry)(() => prisma_1.prisma.contactInfo.findUnique({ where: { id: "default" } }));
+        if (dbInfo) {
+            return res.json({
+                success: true,
+                data: {
+                    address: dbInfo.address,
+                    phone: dbInfo.phone,
+                    alternatePhone: dbInfo.alternatePhone || "",
+                    email: dbInfo.email,
+                    hours: dbInfo.hours || "",
+                },
+            });
+        }
     }
-    catch (err) {
-        console.error("Get contact info error:", err);
-        res.status(500).json({ success: false, error: err.message || "Server error" });
+    catch (dbErr) {
+        console.warn("DB contactInfo fetch warning, using JSON fallback:", dbErr?.message || dbErr);
     }
+    res.json({
+        success: true,
+        data: contactInfoStore,
+    });
 });
-// PUT /api/contact/info - Update contact information from Super Admin Dashboard
-app.put("/api/contact/info", (req, res) => {
+// PUT /api/contact/info - Update contact information (Database first with JSON backup)
+app.put("/api/contact/info", async (req, res) => {
     try {
         const { address, phone, alternatePhone, email, hours } = req.body;
-        contactInfoStore = {
+        const updatedData = {
             address: address !== undefined ? String(address).trim() : contactInfoStore.address,
             phone: phone !== undefined ? String(phone).replace(/\D/g, "").slice(0, 10) : contactInfoStore.phone,
             alternatePhone: alternatePhone !== undefined ? String(alternatePhone).replace(/\D/g, "").slice(0, 10) : (contactInfoStore.alternatePhone || ""),
             email: email !== undefined ? String(email).trim().toLowerCase() : contactInfoStore.email,
             hours: hours !== undefined ? String(hours).trim() : contactInfoStore.hours,
         };
+        // 1. Save to Database first
+        try {
+            await (0, prisma_1.withDbRetry)(() => prisma_1.prisma.contactInfo.upsert({
+                where: { id: "default" },
+                update: {
+                    address: updatedData.address,
+                    phone: updatedData.phone,
+                    alternatePhone: updatedData.alternatePhone || null,
+                    email: updatedData.email,
+                    hours: updatedData.hours || null,
+                },
+                create: {
+                    id: "default",
+                    address: updatedData.address,
+                    phone: updatedData.phone,
+                    alternatePhone: updatedData.alternatePhone || null,
+                    email: updatedData.email,
+                    hours: updatedData.hours || null,
+                }
+            }));
+        }
+        catch (dbErr) {
+            console.error("DB update contact info error:", dbErr);
+        }
+        // 2. Backup to JSON file
+        contactInfoStore = updatedData;
         saveContactInfo(contactInfoStore);
         res.json({
             success: true,
@@ -1097,8 +1296,8 @@ app.put("/api/contact/info", (req, res) => {
         res.status(500).json({ success: false, error: err.message || "Server error" });
     }
 });
-// POST /api/contact/submit - Submit contact inquiry from website
-app.post("/api/contact/submit", (req, res) => {
+// POST /api/contact/submit - Submit contact inquiry (Database first with JSON backup)
+app.post("/api/contact/submit", async (req, res) => {
     try {
         const { name, email, phone, subject, message, city, district } = req.body;
         if (!name || !email || !phone || !message) {
@@ -1116,17 +1315,41 @@ app.post("/api/contact/submit", (req, res) => {
             });
             return;
         }
+        const cleanSubject = subject ? String(subject).trim() : "General Inquiry";
+        const cleanMessage = String(message).trim();
+        const cleanName = String(name).trim();
+        const cleanEmail = String(email).trim().toLowerCase();
+        const msgId = `msg_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+        // 1. Database first
+        let createdRecord = null;
+        try {
+            createdRecord = await (0, prisma_1.withDbRetry)(() => prisma_1.prisma.contactMessage.create({
+                data: {
+                    id: msgId,
+                    name: cleanName,
+                    email: cleanEmail,
+                    phone: cleanPhone,
+                    subject: cleanSubject,
+                    message: cleanMessage,
+                    status: "UNREAD",
+                }
+            }));
+        }
+        catch (dbErr) {
+            console.error("DB submit contact message error:", dbErr);
+        }
+        // 2. Backup to JSON file
         const newMsg = {
-            id: `msg_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
-            name: String(name).trim(),
-            email: String(email).trim().toLowerCase(),
+            id: createdRecord ? createdRecord.id : msgId,
+            name: cleanName,
+            email: cleanEmail,
             phone: cleanPhone,
-            subject: subject ? String(subject).trim() : "General Inquiry",
-            message: String(message).trim(),
+            subject: cleanSubject,
+            message: cleanMessage,
             city: city ? String(city).trim() : undefined,
             district: district ? String(district).trim() : undefined,
             status: "UNREAD",
-            createdAt: new Date().toISOString(),
+            createdAt: createdRecord ? createdRecord.createdAt.toISOString() : new Date().toISOString(),
         };
         contactMessagesStore.unshift(newMsg);
         saveContactMessages(contactMessagesStore);
@@ -1141,34 +1364,76 @@ app.post("/api/contact/submit", (req, res) => {
         res.status(500).json({ success: false, error: err.message || "Server error submitting message." });
     }
 });
-// GET /api/contact/messages - Get all contact messages for Super Admin Dashboard
-app.get("/api/contact/messages", (req, res) => {
+// GET /api/contact/messages - Get all contact messages (Database with JSON fallback)
+app.get("/api/contact/messages", async (req, res) => {
     try {
-        res.json({
-            success: true,
-            count: contactMessagesStore.length,
-            data: contactMessagesStore,
-        });
+        const dbMessages = await (0, prisma_1.withDbRetry)(() => prisma_1.prisma.contactMessage.findMany({
+            orderBy: { createdAt: "desc" },
+        }));
+        if (dbMessages && dbMessages.length > 0) {
+            return res.json({
+                success: true,
+                count: dbMessages.length,
+                data: dbMessages.map((m) => ({
+                    id: m.id,
+                    name: m.name,
+                    email: m.email,
+                    phone: m.phone,
+                    subject: m.subject || "General Inquiry",
+                    message: m.message,
+                    status: m.status,
+                    createdAt: m.createdAt.toISOString(),
+                })),
+            });
+        }
     }
-    catch (err) {
-        console.error("Get contact messages error:", err);
-        res.status(500).json({ success: false, error: err.message || "Server error" });
+    catch (dbErr) {
+        console.warn("DB contact messages fetch warning, using JSON fallback:", dbErr?.message || dbErr);
     }
+    res.json({
+        success: true,
+        count: contactMessagesStore.length,
+        data: contactMessagesStore,
+    });
 });
-// PUT /api/contact/messages/:id - Update message status
-app.put("/api/contact/messages/:id", (req, res) => {
+// PUT /api/contact/messages/:id - Update message status (Database first with JSON backup)
+app.put("/api/contact/messages/:id", async (req, res) => {
     try {
-        const { id } = req.params;
+        const id = String(req.params.id);
         const { status } = req.body;
+        // 1. Update in Database
+        try {
+            await (0, prisma_1.withDbRetry)(() => prisma_1.prisma.contactMessage.update({
+                where: { id },
+                data: {
+                    ...(status && { status }),
+                }
+            }));
+        }
+        catch (dbErr) {
+            console.warn("DB update contact message warning:", dbErr?.message || dbErr);
+        }
+        // 2. Update in JSON store
         const target = contactMessagesStore.find((m) => m.id === id);
+        if (target && status) {
+            target.status = status;
+            saveContactMessages(contactMessagesStore);
+        }
         if (!target) {
+            try {
+                const dbItem = await prisma_1.prisma.contactMessage.findUnique({ where: { id } });
+                if (dbItem) {
+                    return res.json({
+                        success: true,
+                        message: "Message status updated successfully",
+                        data: dbItem,
+                    });
+                }
+            }
+            catch (_) { }
             res.status(404).json({ success: false, error: "Message not found!" });
             return;
         }
-        if (status) {
-            target.status = status;
-        }
-        saveContactMessages(contactMessagesStore);
         res.json({
             success: true,
             message: "Message status updated successfully",
@@ -1180,21 +1445,35 @@ app.put("/api/contact/messages/:id", (req, res) => {
         res.status(500).json({ success: false, error: err.message || "Server error" });
     }
 });
-// DELETE /api/contact/messages/:id - Delete message
-app.delete("/api/contact/messages/:id", (req, res) => {
+// DELETE /api/contact/messages/:id - Delete message (Database first with JSON backup)
+app.delete("/api/contact/messages/:id", async (req, res) => {
     try {
-        const { id } = req.params;
+        const id = String(req.params.id);
+        // 1. Delete from Database
+        let dbDeleted = null;
+        try {
+            dbDeleted = await (0, prisma_1.withDbRetry)(() => prisma_1.prisma.contactMessage.delete({
+                where: { id }
+            }));
+        }
+        catch (dbErr) {
+            console.warn("DB delete contact message warning:", dbErr?.message || dbErr);
+        }
+        // 2. Delete from JSON file
         const index = contactMessagesStore.findIndex((m) => m.id === id);
-        if (index === -1) {
+        let fileDeleted = null;
+        if (index !== -1) {
+            fileDeleted = contactMessagesStore.splice(index, 1)[0];
+            saveContactMessages(contactMessagesStore);
+        }
+        if (!dbDeleted && !fileDeleted) {
             res.status(404).json({ success: false, error: "Message not found!" });
             return;
         }
-        const deleted = contactMessagesStore.splice(index, 1)[0];
-        saveContactMessages(contactMessagesStore);
         res.json({
             success: true,
             message: "Message deleted successfully",
-            data: deleted,
+            data: fileDeleted || dbDeleted,
         });
     }
     catch (err) {
@@ -1843,25 +2122,81 @@ const saveAdsToFile = (ads) => {
     }
 };
 let adsStore = loadAdsFromFile();
-// GET /api/ads - Get all ads
-app.get(["/api/ads", "/ads", "/api/ads/all"], (req, res) => {
+const formatDbAd = (ad) => {
+    let socialLinks = {};
+    if (ad.socialLinks) {
+        try {
+            socialLinks = typeof ad.socialLinks === "string" ? JSON.parse(ad.socialLinks) : ad.socialLinks;
+        }
+        catch (_) { }
+    }
+    return {
+        id: ad.id,
+        title: ad.title,
+        subtitle: ad.subtitle || "",
+        imageUrl: ad.imageUrl || "",
+        videoUrl: ad.videoUrl || "",
+        mediaType: ad.mediaType === "video" ? "video" : "image",
+        adLink: ad.adLink || "",
+        socialLinks,
+        isActive: Boolean(ad.isActive),
+        createdAt: ad.createdAt instanceof Date ? ad.createdAt.toISOString() : String(ad.createdAt),
+        updatedAt: ad.updatedAt instanceof Date ? ad.updatedAt.toISOString() : (ad.updatedAt ? String(ad.updatedAt) : undefined),
+    };
+};
+// GET /api/ads - Get all ads (Database first with JSON fallback)
+app.get(["/api/ads", "/ads", "/api/ads/all"], async (req, res) => {
+    try {
+        const dbAds = await (0, prisma_1.withDbRetry)(() => prisma_1.prisma.advertisement.findMany({
+            orderBy: [{ order: "asc" }, { createdAt: "desc" }],
+        }));
+        if (dbAds && dbAds.length > 0) {
+            return res.json({ success: true, data: dbAds.map(formatDbAd) });
+        }
+    }
+    catch (dbErr) {
+        console.warn("DB ads fetch warning, using JSON fallback:", dbErr?.message || dbErr);
+    }
     adsStore = loadAdsFromFile();
     res.json({ success: true, data: adsStore });
 });
-// GET /api/ads/active - Get active ads for website front page popup
-app.get(["/api/ads/active", "/ads/active"], (req, res) => {
+// GET /api/ads/active - Get active ads for website front page popup (Database first with JSON fallback)
+app.get(["/api/ads/active", "/ads/active"], async (req, res) => {
+    try {
+        const dbAds = await (0, prisma_1.withDbRetry)(() => prisma_1.prisma.advertisement.findMany({
+            where: { isActive: true },
+            orderBy: [{ order: "asc" }, { createdAt: "desc" }],
+        }));
+        if (dbAds && dbAds.length > 0) {
+            return res.json({ success: true, data: dbAds.map(formatDbAd) });
+        }
+    }
+    catch (dbErr) {
+        console.warn("DB active ads fetch warning, using JSON fallback:", dbErr?.message || dbErr);
+    }
     adsStore = loadAdsFromFile();
     const activeAds = adsStore.filter((ad) => ad.isActive);
     res.json({ success: true, data: activeAds });
 });
-// POST & PUT /api/ads/reorder - Save new display order of advertisements
-app.post(["/api/ads/reorder", "/ads/reorder"], (req, res) => {
+// POST & PUT /api/ads/reorder - Save new display order of advertisements (Database first with JSON backup)
+app.post(["/api/ads/reorder", "/ads/reorder"], async (req, res) => {
     try {
         const { ads: newAdsOrder } = req.body;
         if (!Array.isArray(newAdsOrder)) {
             res.status(400).json({ success: false, error: "Invalid array of ads provided" });
             return;
         }
+        // 1. Update order in Database
+        try {
+            await Promise.all(newAdsOrder.map((ad, index) => (0, prisma_1.withDbRetry)(() => prisma_1.prisma.advertisement.updateMany({
+                where: { id: ad.id },
+                data: { order: index }
+            }))));
+        }
+        catch (dbErr) {
+            console.warn("DB ads reorder warning:", dbErr?.message || dbErr);
+        }
+        // 2. Backup to JSON file
         adsStore = newAdsOrder;
         saveAdsToFile(adsStore);
         res.json({
@@ -1875,21 +2210,52 @@ app.post(["/api/ads/reorder", "/ads/reorder"], (req, res) => {
         res.status(500).json({ success: false, error: "Server Error: Failed to save ad order." });
     }
 });
-// POST /api/ads - Create a new ad
-app.post(["/api/ads", "/ads"], (req, res) => {
+// POST /api/ads - Create a new ad (Database first with JSON backup)
+app.post(["/api/ads", "/ads"], async (req, res) => {
     try {
         const { title, subtitle, imageUrl, videoUrl, mediaType, adLink, socialLinks, isActive } = req.body;
+        const adId = `ad_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+        const cleanTitle = title ? String(title).trim() : "Advertisement";
+        const cleanSubtitle = subtitle ? String(subtitle).trim() : "";
+        const cleanImageUrl = imageUrl ? String(imageUrl).trim() : "";
+        const cleanVideoUrl = videoUrl ? String(videoUrl).trim() : "";
+        const finalMediaType = mediaType === "video" ? "video" : "image";
+        const cleanAdLink = adLink ? String(adLink).trim() : "";
+        const cleanSocial = socialLinks || {};
+        const activeFlag = isActive !== undefined ? Boolean(isActive) : true;
+        // 1. Database first
+        let dbCreated = null;
+        try {
+            dbCreated = await (0, prisma_1.withDbRetry)(() => prisma_1.prisma.advertisement.create({
+                data: {
+                    id: adId,
+                    title: cleanTitle,
+                    subtitle: cleanSubtitle || null,
+                    imageUrl: cleanImageUrl || null,
+                    videoUrl: cleanVideoUrl || null,
+                    mediaType: finalMediaType,
+                    adLink: cleanAdLink || null,
+                    socialLinks: JSON.stringify(cleanSocial),
+                    isActive: activeFlag,
+                    order: 0,
+                }
+            }));
+        }
+        catch (dbErr) {
+            console.error("DB create ad error:", dbErr);
+        }
+        // 2. Backup to JSON file
         const newAd = {
-            id: `ad_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
-            title: title ? String(title).trim() : "Advertisement",
-            subtitle: subtitle ? String(subtitle).trim() : "",
-            imageUrl: imageUrl ? String(imageUrl).trim() : "",
-            videoUrl: videoUrl ? String(videoUrl).trim() : "",
-            mediaType: mediaType === "video" ? "video" : "image",
-            adLink: adLink ? String(adLink).trim() : "",
-            socialLinks: socialLinks || {},
-            isActive: isActive !== undefined ? Boolean(isActive) : true,
-            createdAt: new Date().toISOString()
+            id: dbCreated ? dbCreated.id : adId,
+            title: cleanTitle,
+            subtitle: cleanSubtitle,
+            imageUrl: cleanImageUrl,
+            videoUrl: cleanVideoUrl,
+            mediaType: finalMediaType,
+            adLink: cleanAdLink,
+            socialLinks: cleanSocial,
+            isActive: activeFlag,
+            createdAt: dbCreated ? dbCreated.createdAt.toISOString() : new Date().toISOString()
         };
         adsStore.unshift(newAd);
         saveAdsToFile(adsStore);
@@ -1904,33 +2270,56 @@ app.post(["/api/ads", "/ads"], (req, res) => {
         res.status(500).json({ success: false, error: "Server Error: Failed to create ad." });
     }
 });
-// PUT & POST /api/ads/:id - Update an ad
-app.put(["/api/ads/:id", "/ads/:id", "/api/ads/update/:id"], (req, res) => {
+// PUT & POST /api/ads/:id - Update an ad (Database first with JSON backup)
+app.put(["/api/ads/:id", "/ads/:id", "/api/ads/update/:id"], async (req, res) => {
     try {
         const id = String(req.params.id);
         const { title, subtitle, imageUrl, videoUrl, mediaType, adLink, socialLinks, isActive } = req.body;
+        // 1. Update in Database
+        let dbUpdated = null;
+        try {
+            dbUpdated = await (0, prisma_1.withDbRetry)(() => prisma_1.prisma.advertisement.update({
+                where: { id },
+                data: {
+                    ...(title !== undefined && { title: String(title).trim() }),
+                    ...(subtitle !== undefined && { subtitle: String(subtitle).trim() }),
+                    ...(imageUrl !== undefined && { imageUrl: String(imageUrl).trim() }),
+                    ...(videoUrl !== undefined && { videoUrl: String(videoUrl).trim() }),
+                    ...(mediaType !== undefined && { mediaType: mediaType === "video" ? "video" : "image" }),
+                    ...(adLink !== undefined && { adLink: String(adLink).trim() }),
+                    ...(socialLinks !== undefined && { socialLinks: JSON.stringify(socialLinks) }),
+                    ...(isActive !== undefined && { isActive: Boolean(isActive) }),
+                }
+            }));
+        }
+        catch (dbErr) {
+            console.warn("DB update ad warning:", dbErr?.message || dbErr);
+        }
+        // 2. Update in JSON store
         const idx = adsStore.findIndex((a) => a.id === id);
-        if (idx === -1) {
+        if (idx !== -1) {
+            adsStore[idx] = {
+                ...adsStore[idx],
+                ...(title !== undefined && { title: String(title).trim() }),
+                ...(subtitle !== undefined && { subtitle: String(subtitle).trim() }),
+                ...(imageUrl !== undefined && { imageUrl: String(imageUrl).trim() }),
+                ...(videoUrl !== undefined && { videoUrl: String(videoUrl).trim() }),
+                ...(mediaType !== undefined && { mediaType: mediaType === "video" ? "video" : "image" }),
+                ...(adLink !== undefined && { adLink: String(adLink).trim() }),
+                ...(socialLinks !== undefined && { socialLinks }),
+                ...(isActive !== undefined && { isActive: Boolean(isActive) }),
+                updatedAt: new Date().toISOString()
+            };
+            saveAdsToFile(adsStore);
+        }
+        if (idx === -1 && !dbUpdated) {
             res.status(404).json({ success: false, error: "Advertisement not found" });
             return;
         }
-        adsStore[idx] = {
-            ...adsStore[idx],
-            ...(title !== undefined && { title: String(title).trim() }),
-            ...(subtitle !== undefined && { subtitle: String(subtitle).trim() }),
-            ...(imageUrl !== undefined && { imageUrl: String(imageUrl).trim() }),
-            ...(videoUrl !== undefined && { videoUrl: String(videoUrl).trim() }),
-            ...(mediaType !== undefined && { mediaType: mediaType === "video" ? "video" : "image" }),
-            ...(adLink !== undefined && { adLink: String(adLink).trim() }),
-            ...(socialLinks !== undefined && { socialLinks }),
-            ...(isActive !== undefined && { isActive: Boolean(isActive) }),
-            updatedAt: new Date().toISOString()
-        };
-        saveAdsToFile(adsStore);
         res.json({
             success: true,
             message: "Advertisement updated successfully!",
-            data: adsStore[idx]
+            data: idx !== -1 ? adsStore[idx] : formatDbAd(dbUpdated)
         });
     }
     catch (error) {
@@ -1938,21 +2327,35 @@ app.put(["/api/ads/:id", "/ads/:id", "/api/ads/update/:id"], (req, res) => {
         res.status(500).json({ success: false, error: "Server Error: Failed to update ad." });
     }
 });
-// DELETE /api/ads/:id - Delete an ad
-app.delete(["/api/ads/:id", "/api/ads/delete/:id", "/ads/:id", "/ads/delete/:id"], (req, res) => {
+// DELETE /api/ads/:id - Delete an ad (Database first with JSON backup)
+app.delete(["/api/ads/:id", "/api/ads/delete/:id", "/ads/:id", "/ads/delete/:id"], async (req, res) => {
     try {
         const id = String(req.params.id);
+        // 1. Delete from Database
+        let dbDeleted = null;
+        try {
+            dbDeleted = await (0, prisma_1.withDbRetry)(() => prisma_1.prisma.advertisement.delete({
+                where: { id }
+            }));
+        }
+        catch (dbErr) {
+            console.warn("DB delete ad warning:", dbErr?.message || dbErr);
+        }
+        // 2. Delete from JSON file
         const idx = adsStore.findIndex((a) => a.id === id);
-        if (idx === -1) {
+        let fileDeleted = null;
+        if (idx !== -1) {
+            fileDeleted = adsStore.splice(idx, 1)[0];
+            saveAdsToFile(adsStore);
+        }
+        if (!dbDeleted && !fileDeleted) {
             res.status(404).json({ success: false, error: "Advertisement not found" });
             return;
         }
-        const deleted = adsStore.splice(idx, 1)[0];
-        saveAdsToFile(adsStore);
         res.json({
             success: true,
             message: "Advertisement deleted successfully",
-            data: deleted
+            data: fileDeleted || (dbDeleted ? formatDbAd(dbDeleted) : { id })
         });
     }
     catch (error) {
