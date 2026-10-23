@@ -168,7 +168,7 @@ async function finalizeRegistration(pendingPaymentIdOrOptions, options = {}) {
       const amountPaise = Number(lockedPayment.amountPaise);
       const amountRupees = Math.round(amountPaise / 100);
       const amountInWords = convertNumberToMarathiWords(amountRupees);
-      const publicToken = crypto.randomBytes(16).toString('hex');
+      const publicToken = lockedPayment.publicToken || crypto.randomBytes(16).toString('hex');
       const receiptHmac = computeReceiptHmac(receiptNo, date, amountPaise, memberNos);
 
       // 6. Create Registration & Member records
@@ -326,7 +326,7 @@ async function finalizeDonation(pendingPaymentIdOrOptions, options = {}) {
       const amountPaise = Number(lockedPayment.amountPaise);
       const amountRupees = Math.round(amountPaise / 100);
       const amountInWords = convertNumberToMarathiWords(amountRupees);
-      const publicToken = crypto.randomBytes(16).toString('hex');
+      const publicToken = lockedPayment.publicToken || crypto.randomBytes(16).toString('hex');
       const receiptHmac = computeReceiptHmac(receiptNo, date, amountPaise, []);
 
       // 4. Create Donation record

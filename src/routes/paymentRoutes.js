@@ -323,11 +323,20 @@ router.get('/payments/status/:merchantOrderId', async (req, res) => {
 
     // If already finalized successfully, return receipt token
     if (pending.status === 'SUCCESS') {
+      const reg = await prisma.memberRegistration.findUnique({
+        where: { pendingPaymentId: pending.id },
+      });
+      const don = reg ? null : await prisma.donation.findUnique({
+        where: { pendingPaymentId: pending.id },
+      });
+      const record = reg || don;
+
       return res.json({
         success: true,
         status: 'SUCCESS',
         state: 'SUCCESS',
-        publicToken: pending.publicToken,
+        publicToken: record?.publicToken || pending.publicToken,
+        receiptNo: record?.receiptNo,
       });
     }
 
@@ -392,7 +401,7 @@ router.get('/payments/status/:merchantOrderId', async (req, res) => {
         success: true,
         status: 'SUCCESS',
         state: 'SUCCESS',
-        publicToken: pending.publicToken,
+        publicToken: record.publicToken || pending.publicToken,
         receiptNo: record.receiptNo,
       });
     }
@@ -496,7 +505,14 @@ router.get('/receipts/:publicToken', async (req, res) => {
 
     // Check MemberRegistration
     const registration = await prisma.memberRegistration.findFirst({
-      where: { publicToken, status: 'ACTIVE' },
+      where: {
+        OR: [
+          { publicToken },
+          { pendingPayment: { publicToken } },
+          { receiptNo: publicToken },
+        ],
+        status: 'ACTIVE',
+      },
       include: {
         mainMembers: { orderBy: { srNo: 'asc' } },
         familyMembers: { orderBy: { srNo: 'asc' } },
@@ -548,7 +564,14 @@ router.get('/receipts/:publicToken', async (req, res) => {
 
     // Check Donation
     const donation = await prisma.donation.findFirst({
-      where: { publicToken, status: 'ACTIVE' },
+      where: {
+        OR: [
+          { publicToken },
+          { pendingPayment: { publicToken } },
+          { receiptNo: publicToken },
+        ],
+        status: 'ACTIVE',
+      },
     });
 
     if (donation) {
@@ -594,7 +617,14 @@ router.get('/verify/:publicToken', async (req, res) => {
     const publicToken = String(req.params.publicToken).trim();
 
     const reg = await prisma.memberRegistration.findFirst({
-      where: { publicToken, status: 'ACTIVE' },
+      where: {
+        OR: [
+          { publicToken },
+          { pendingPayment: { publicToken } },
+          { receiptNo: publicToken },
+        ],
+        status: 'ACTIVE',
+      },
       include: { mainMembers: { select: { memberNo: true } } },
     });
 
@@ -620,7 +650,14 @@ router.get('/verify/:publicToken', async (req, res) => {
     }
 
     const don = await prisma.donation.findFirst({
-      where: { publicToken, status: 'ACTIVE' },
+      where: {
+        OR: [
+          { publicToken },
+          { pendingPayment: { publicToken } },
+          { receiptNo: publicToken },
+        ],
+        status: 'ACTIVE',
+      },
     });
 
     if (don) {
