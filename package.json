@@ -6,12 +6,12 @@
     "dev": "ts-node-dev --compiler-options \"{\\\"module\\\":\\\"CommonJS\\\",\\\"moduleResolution\\\":\\\"node\\\"}\" --respawn --transpile-only src/index.ts",
     "build": "npx prisma generate && tsc",
     "vercel-build": "npx prisma generate && tsc",
-    "postinstall": "npx prisma generate",
     "start": "node dist/src/index.js",
     "prisma:generate": "npx prisma generate",
     "prisma:push": "npx prisma db push"
   },
   "dependencies": {
+    "@phonepe-pg/pg-sdk-node": "^2.0.6",
     "@prisma/client": "^6.19.3",
     "@types/nodemailer": "^8.0.1",
     "bcryptjs": "^3.0.3",
@@ -19,7 +19,8 @@
     "dotenv": "^16.5.0",
     "express": "^4.21.2",
     "nodemailer": "^9.0.5",
-    "prisma": "^6.19.3"
+    "prisma": "^6.19.3",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",

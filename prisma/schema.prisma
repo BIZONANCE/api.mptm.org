@@ -16,6 +16,13 @@ model Admin {
   updatedAt DateTime @updatedAt
 }
 
+// ── NEW: atomic counter for receipt/member numbering ──────
+model Counter {
+  key  String @id
+  last Int    @default(0)
+}
+
+// ── EXTENDED: MemberRegistration ──────────────────────────
 model MemberRegistration {
   id                String         @id @default(cuid())
   receiptNo         String         @unique
@@ -37,17 +44,34 @@ model MemberRegistration {
   updatedAt         DateTime       @updatedAt
   mainMembers       MainMember[]
   familyMembers     FamilyMember[]
+
+  // NEW nullable columns (legacy rows stay NULL; all new rows must populate)
+  pendingPaymentId  String?        @unique    // link to PendingPayment
+  publicToken       String?        @unique    // shareable receipt token
+  status            String         @default("ACTIVE")   // ACTIVE | VOID
+  paymentMode       String?        // ONLINE | CASH
+  paymentReference  String?        // gateway txn id or cash reference
+  amountPaise       Int?           // authoritative amount in paise
+  collectedBy       String?        // staff user id for cash payments
+  receiptHmac       String?        // HMAC-SHA256 for receipt integrity
+  paymentDetails    Json?          // sanitized PhonePe payment details (transaction id, UTR, etc.)
+
+  pendingPayment    PendingPayment? @relation(fields: [pendingPaymentId], references: [id])
 }
 
+// ── EXTENDED: MainMember ──────────────────────────────────
 model MainMember {
   id             String             @id @default(cuid())
   registrationId String
   srNo           Int
-  memberNo       String
+  memberNo       String             @unique   // NEW unique constraint
   fullName       String
   mobileNo       String
   prabhagNo      String
+  memberNoSeq    Int?               // NEW: internal sequence number
   registration   MemberRegistration @relation(fields: [registrationId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([mobileNo])              // NEW index
 }
 
 model FamilyMember {
@@ -62,6 +86,7 @@ model FamilyMember {
   registration   MemberRegistration @relation(fields: [registrationId], references: [id], onDelete: Cascade, onUpdate: Cascade)
 }
 
+// ── EXTENDED: Donation ────────────────────────────────────
 model Donation {
   id                String   @id @default(cuid())
   receiptNo         String   @unique
@@ -81,6 +106,19 @@ model Donation {
   date              String
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
+
+  // NEW nullable columns
+  pendingPaymentId  String?  @unique
+  publicToken       String?  @unique
+  status            String   @default("ACTIVE")
+  paymentMode       String?
+  paymentReference  String?
+  amountPaise       Int?
+  collectedBy       String?
+  receiptHmac       String?
+  paymentDetails    Json?
+
+  pendingPayment    PendingPayment? @relation(fields: [pendingPaymentId], references: [id])
 }
 
 model ExecutiveMember {
@@ -100,5 +138,136 @@ model ExecutiveMember {
   status      String   @default("ACTIVE")
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+}
+
+model CareerApplication {
+  id         String   @id @default(cuid())
+  name       String
+  email      String
+  phone      String
+  position   String
+  message    String?
+  city       String?
+  district   String?
+  resumeName String?
+  resumeData String?  @db.Text
+  status     String   @default("PENDING")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+model ContactMessage {
+  id        String   @id @default(cuid())
+  name      String
+  email     String
+  phone     String
+  subject   String?
+  message   String
+  status    String   @default("UNREAD")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model ContactInfo {
+  id             String   @id @default("default")
+  address        String
+  phone          String
+  alternatePhone String?
+  email          String
+  hours          String?
+  updatedAt      DateTime @updatedAt
+}
+
+model Advertisement {
+  id          String   @id @default(cuid())
+  title       String
+  subtitle    String?
+  imageUrl    String?  @db.Text
+  videoUrl    String?  @db.Text
+  mediaType   String?  @default("image")
+  adLink      String?
+  socialLinks String?  @db.Text
+  isActive    Boolean  @default(true)
+  order       Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model ManagedUser {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String
+  phone     String
+  city      String?
+  date      String?
+  time      String?
+  status    String   @default("VERIFIED")
+  role      String   @default("User")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ── NEW: PendingPayment ───────────────────────────────────
+model PendingPayment {
+  id               String              @id @default(cuid())
+  merchantOrderId  String              @unique
+  idempotencyKey   String              @unique
+  type             String              // PRIMARY | EXECUTIVE | DONATION
+  payload          Json                // full validated form data
+  amountPaise      Int                 // server-computed, authoritative
+  status           String              @default("PENDING")  // PENDING|SUCCESS|FAILED|EXPIRED
+  provider         String              @default("phonepe")
+  gatewayTxnId     String?
+  gatewayResponse  Json?
+  publicToken      String              @unique
+  expiresAt        DateTime
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+  completedAt      DateTime?
+
+  registration     MemberRegistration?
+  donation         Donation?
+
+  @@index([status])
+  @@index([createdAt])
+}
+
+// ── NEW: FailedPayment ────────────────────────────────────
+model FailedPayment {
+  id               String   @id @default(cuid())
+  pendingPaymentId String   @unique
+  type             String
+  payload          Json
+  amountPaise      Int
+  provider         String
+  gatewayResponse  Json?
+  failureCode      String?
+  failureReason    String?
+  status           String   @default("FAILED")  // FAILED|RECOVERED|REFUND_REQUIRED|REFUNDED
+  purgeAfter       DateTime
+  createdAt        DateTime @default(now())
+}
+
+// ── NEW: WebhookLog ───────────────────────────────────────
+model WebhookLog {
+  id             String    @id @default(cuid())
+  provider       String
+  eventId        String?   @unique
+  rawBody        String    @db.Text
+  signatureValid Boolean   @default(false)
+  processedAt    DateTime?
+  createdAt      DateTime  @default(now())
+}
+
+// ── NEW: AuditLog ─────────────────────────────────────────
+model AuditLog {
+  id        String   @id @default(cuid())
+  actorType String   // SYSTEM | STAFF | WEBHOOK
+  actorId   String?
+  action    String
+  entity    String
+  entityId  String?
+  meta      Json?
+  createdAt DateTime @default(now())
 }
 
