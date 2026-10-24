@@ -788,6 +788,259 @@ router.get('/admin/payments/summary', async (req, res) => {
     }
 });
 // ------------------------------------------------------------
+// 10.5. ADMIN: GET /api/admin/payments/all
+// Tracks every single transaction attempt (SUCCESS, FAILED, PENDING) by every second
+// ------------------------------------------------------------
+router.get('/admin/payments/all', async (req, res) => {
+    try {
+        const search = String(req.query.search || '').trim().toLowerCase();
+        const statusFilter = String(req.query.status || 'ALL').toUpperCase();
+        const typeFilter = String(req.query.type || 'ALL').toUpperCase();
+        const page = Math.max(1, parseInt(String(req.query.page || '1'), 10));
+        const limit = Math.min(100, Math.max(1, parseInt(String(req.query.limit || '50'), 10)));
+        const { isSuperAdmin, refAliases } = await resolveStaffContext(req);
+        // 1. Fetch PendingPayments (every attempt initiated)
+        const pendingList = await prisma.pendingPayment.findMany({
+            include: {
+                registration: {
+                    include: {
+                        mainMembers: { orderBy: { srNo: 'asc' } },
+                        familyMembers: true,
+                    },
+                },
+                donation: true,
+            },
+            orderBy: { createdAt: 'desc' },
+            take: 1000,
+        });
+        // 2. Fetch FailedPayments for diagnostic error reasons
+        const failedList = await prisma.failedPayment.findMany({
+            orderBy: { createdAt: 'desc' },
+            take: 1000,
+        });
+        const failedMap = new Map(failedList.map((f) => [f.pendingPaymentId, f]));
+        // 3. Fetch all registrations (scoped if staff)
+        const regWhere = !isSuperAdmin
+            ? { OR: refAliases.map((a) => ({ referredBy: { equals: a, mode: 'insensitive' } })) }
+            : undefined;
+        const allRegs = await prisma.memberRegistration.findMany({
+            where: regWhere,
+            include: {
+                mainMembers: { orderBy: { srNo: 'asc' } },
+                familyMembers: true,
+            },
+            orderBy: { createdAt: 'desc' },
+            take: 1000,
+        });
+        let allDons = [];
+        if (isSuperAdmin) {
+            allDons = await prisma.donation.findMany({
+                orderBy: { createdAt: 'desc' },
+                take: 500,
+            });
+        }
+        let allItems = [];
+        const registeredIdsInPending = new Set();
+        const donatedIdsInPending = new Set();
+        // 4. Map PendingPayments
+        for (const p of pendingList) {
+            if (p.registration?.id)
+                registeredIdsInPending.add(p.registration.id);
+            if (p.donation?.id)
+                donatedIdsInPending.add(p.donation.id);
+            const payload = (typeof p.payload === 'object' && p.payload !== null) ? p.payload : {};
+            const ref = String(p.registration?.referredBy || payload.referredBy || payload.formData?.referredBy || '').trim();
+            if (!isSuperAdmin && !refAliases.includes(ref.toLowerCase())) {
+                continue;
+            }
+            const isDonation = p.type === 'DONATION' || Boolean(p.donation);
+            const isExec = p.type === 'EXECUTIVE' ||
+                (p.registration?.receiptNo || '').toUpperCase().startsWith('MPTM-EM-') ||
+                (p.registration?.receiptNo || '').toUpperCase().includes('EM-R') ||
+                (p.registration?.mainMembers?.[0]?.memberNo || '').toUpperCase().includes('EM-S');
+            const failedInfo = failedMap.get(p.id);
+            let status = 'PENDING';
+            if (p.status === 'SUCCESS' || p.registration || p.donation) {
+                status = 'SUCCESS';
+            }
+            else if (p.status === 'FAILED' || failedInfo || p.status === 'EXPIRED') {
+                status = 'FAILED';
+            }
+            else {
+                status = 'PENDING';
+            }
+            const primaryMember = p.registration?.mainMembers?.[0];
+            const payloadFirstMember = Array.isArray(payload.mainMembers) ? payload.mainMembers[0] : null;
+            const name = p.registration?.mainMembers?.[0]?.fullName ||
+                p.donation?.name ||
+                payloadFirstMember?.fullName ||
+                payload.name ||
+                payload.fullName ||
+                'N/A';
+            const memberNo = primaryMember?.memberNo || null;
+            const mobile = primaryMember?.mobileNo ||
+                p.donation?.mobileNo ||
+                payloadFirstMember?.mobileNo ||
+                payload.mobileNo ||
+                'N/A';
+            const city = p.registration?.gaav ||
+                p.registration?.city ||
+                payload.gaav ||
+                payload.city ||
+                payload.district ||
+                p.donation?.city ||
+                'अमरावती';
+            const prabhag = primaryMember?.prabhagNo || payloadFirstMember?.prabhagNo || '-';
+            const mainMembers = p.registration?.mainMembers || payload.mainMembers || [];
+            const familyMembers = p.registration?.familyMembers || payload.familyMembers || [];
+            const failureReason = failedInfo?.failureReason ||
+                p.gatewayResponse?.failureReason ||
+                (p.status === 'EXPIRED' ? 'पेमेंट कालमर्यादा संपली (Session Expired)' : null);
+            const failureCode = failedInfo?.failureCode ||
+                p.gatewayResponse?.responseCode ||
+                p.gatewayResponse?.code ||
+                null;
+            allItems.push({
+                id: p.id,
+                orderId: p.merchantOrderId,
+                receiptNo: p.registration?.receiptNo || p.donation?.receiptNo || null,
+                publicToken: p.registration?.publicToken || p.donation?.publicToken || p.publicToken,
+                category: isDonation ? 'DONATION' : 'REGISTRATION',
+                type: isDonation ? 'DONATION' : isExec ? 'EXECUTIVE' : 'PRIMARY',
+                status,
+                amount: Math.round(Number(p.amountPaise || 0) / 100),
+                amountInWords: p.registration?.amountInWords || p.donation?.amountInWords || '',
+                name,
+                memberNo,
+                mobile,
+                city,
+                prabhag,
+                mainCount: Array.isArray(mainMembers) && mainMembers.length > 0 ? mainMembers.length : 1,
+                familyCount: Array.isArray(familyMembers) ? familyMembers.length : 0,
+                mainMembers,
+                familyMembers,
+                address: p.registration?.address || payload.address || '',
+                paymentMode: p.provider === 'cash' ? 'रोख (Cash)' : 'Online UPI',
+                referredBy: ref || null,
+                failureReason,
+                failureCode,
+                gatewayResponse: p.gatewayResponse || failedInfo?.gatewayResponse || null,
+                createdAt: p.createdAt,
+                date: p.registration?.date || p.donation?.date || null,
+                hasValidHmac: Boolean(p.registration?.receiptHmac || p.donation?.receiptHmac),
+            });
+        }
+        // 5. Add registrations not linked to a fetched PendingPayment (e.g. direct, cash, or legacy rows)
+        for (const r of allRegs) {
+            if (registeredIdsInPending.has(r.id))
+                continue;
+            const isExec = (r.receiptNo || '').toUpperCase().startsWith('MPTM-EM-') ||
+                (r.receiptNo || '').toUpperCase().includes('EM-R') ||
+                (r.mainMembers?.[0]?.memberNo || '').toUpperCase().includes('EM-S');
+            const primaryMember = r.mainMembers?.[0];
+            allItems.push({
+                id: r.id,
+                orderId: r.paymentReference || r.receiptNo,
+                receiptNo: r.receiptNo,
+                publicToken: r.publicToken,
+                category: 'REGISTRATION',
+                type: isExec ? 'EXECUTIVE' : 'PRIMARY',
+                status: 'SUCCESS',
+                amount: r.registrationFee,
+                amountInWords: r.amountInWords,
+                name: primaryMember?.fullName || 'N/A',
+                memberNo: primaryMember?.memberNo || null,
+                mobile: primaryMember?.mobileNo || 'N/A',
+                city: r.gaav || r.city || r.district || 'अमरावती',
+                prabhag: primaryMember?.prabhagNo || '-',
+                mainCount: r.mainMembers?.length || 1,
+                familyCount: r.familyMembers?.length || 0,
+                mainMembers: r.mainMembers || [],
+                familyMembers: r.familyMembers || [],
+                address: r.address || '',
+                paymentMode: r.paymentMode || r.paymentMethod || 'रोख (Cash)',
+                referredBy: r.referredBy || null,
+                failureReason: null,
+                failureCode: null,
+                gatewayResponse: null,
+                createdAt: r.createdAt,
+                date: r.date,
+                hasValidHmac: Boolean(r.receiptHmac),
+            });
+        }
+        // 5.1 Add donations not linked to a fetched PendingPayment
+        for (const d of allDons) {
+            if (donatedIdsInPending.has(d.id))
+                continue;
+            allItems.push({
+                id: d.id,
+                orderId: d.receiptNo,
+                receiptNo: d.receiptNo,
+                publicToken: d.publicToken,
+                category: 'DONATION',
+                type: 'DONATION',
+                status: 'SUCCESS',
+                amount: d.amount,
+                amountInWords: d.amountInWords,
+                name: d.name,
+                memberNo: null,
+                mobile: d.mobileNo,
+                city: d.gaav || d.city || d.district || 'अमरावती',
+                prabhag: '-',
+                mainCount: 1,
+                familyCount: 0,
+                mainMembers: [],
+                familyMembers: [],
+                address: d.address || '',
+                paymentMode: d.paymentMethod || 'Online UPI',
+                referredBy: null,
+                failureReason: null,
+                failureCode: null,
+                gatewayResponse: null,
+                createdAt: d.createdAt,
+                date: d.date,
+                hasValidHmac: Boolean(d.receiptHmac),
+            });
+        }
+        // 6. Sort strictly by createdAt DESC (newest attempt by every second first)
+        allItems.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        // 7. Filtering
+        if (statusFilter !== 'ALL') {
+            allItems = allItems.filter((item) => item.status === statusFilter);
+        }
+        if (typeFilter !== 'ALL') {
+            allItems = allItems.filter((item) => item.type === typeFilter);
+        }
+        if (search) {
+            allItems = allItems.filter((item) => {
+                const matchOrder = (item.orderId || '').toLowerCase().includes(search);
+                const matchReceipt = (item.receiptNo || '').toLowerCase().includes(search);
+                const matchName = (item.name || '').toLowerCase().includes(search);
+                const matchMobile = (item.mobile || '').includes(search);
+                const matchCity = (item.city || '').toLowerCase().includes(search);
+                const matchReason = (item.failureReason || '').toLowerCase().includes(search);
+                return matchOrder || matchReceipt || matchName || matchMobile || matchCity || matchReason;
+            });
+        }
+        // 8. Pagination
+        const total = allItems.length;
+        const startIndex = (page - 1) * limit;
+        const paginatedItems = allItems.slice(startIndex, startIndex + limit);
+        return res.json({
+            success: true,
+            items: paginatedItems,
+            total,
+            page,
+            limit,
+            totalPages: Math.ceil(total / limit) || 1,
+        });
+    }
+    catch (err) {
+        safeErrorLog('GET_ALL_PAYMENTS_ERROR', err);
+        return res.status(500).json({ success: false, error: 'Server error loading all payments' });
+    }
+});
+// ------------------------------------------------------------
 // 11. ADMIN: GET /api/admin/payments/successful
 // ------------------------------------------------------------
 router.get('/admin/payments/successful', async (req, res) => {
@@ -820,7 +1073,9 @@ router.get('/admin/payments/successful', async (req, res) => {
         }
         // Normalize registrations
         const regItems = regs.map((r) => {
-            const isExec = (r.receiptNo || '').includes('EM-R') || (r.mainMembers?.[0]?.memberNo || '').includes('EM-S') || r.registrationFee >= 1000;
+            const isExec = (r.receiptNo || '').toUpperCase().startsWith('MPTM-EM-') ||
+                (r.receiptNo || '').toUpperCase().includes('EM-R') ||
+                (r.mainMembers?.[0]?.memberNo || '').toUpperCase().includes('EM-S');
             const primaryMember = r.mainMembers?.[0];
             return {
                 id: r.id,
@@ -1048,12 +1303,15 @@ router.post('/admin/payments/verify-receipt', async (req, res) => {
             const memberNos = reg.mainMembers.map((m) => m.memberNo);
             const expectedHmac = computeReceiptHmac(reg.receiptNo, reg.date, reg.amountPaise || reg.registrationFee * 100, memberNos);
             const isValid = Boolean(reg.receiptHmac && reg.receiptHmac === expectedHmac);
+            const isExecReg = (reg.receiptNo || '').toUpperCase().startsWith('MPTM-EM-') ||
+                (reg.receiptNo || '').toUpperCase().includes('EM-R') ||
+                (reg.mainMembers?.[0]?.memberNo || '').toUpperCase().includes('EM-S');
             return res.json({
                 success: true,
                 found: true,
                 valid: isValid,
                 category: 'REGISTRATION',
-                type: reg.registrationFee >= 1000 ? 'EXECUTIVE' : 'PRIMARY',
+                type: isExecReg ? 'EXECUTIVE' : 'PRIMARY',
                 receiptNo: reg.receiptNo,
                 date: reg.date,
                 amount: reg.registrationFee,
