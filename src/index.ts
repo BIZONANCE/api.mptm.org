@@ -64,16 +64,20 @@ app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 // Mount Rebuilt PhonePe & Payment Routes (Stage C)
 app.use("/api", require("./routes/paymentRoutes"));
 
-// Helper function to delete registration entry cleanly with manual cascade fallback
-const deleteRegistrationByIdOrReceipt = async (identifier: string) => {
+// Helper function to delete registration entry cleanly with manual cascade fallback and automatic archiving
+const deleteRegistrationByIdOrReceipt = async (identifier: string, reason?: string, deletedBy?: string) => {
     return withDbRetry(async () => {
-        // 1. Find target registration by ID or receiptNo
+        // 1. Find target registration by ID or receiptNo (including main and family members)
         const target = await prisma.memberRegistration.findFirst({
             where: {
                 OR: [
                     { id: identifier },
                     { receiptNo: identifier }
                 ]
+            },
+            include: {
+                mainMembers: true,
+                familyMembers: true
             }
         });
 
@@ -82,6 +86,52 @@ const deleteRegistrationByIdOrReceipt = async (identifier: string) => {
         }
 
         const regId = target.id;
+        const main = target.mainMembers?.[0];
+        const isExecutiveReceipt = target.receiptNo?.startsWith("MPTM-EM-") || target.registrationFee === 1001;
+
+        // Archive into DeletedMember table before removal
+        try {
+            const delId = `del_reg_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+            await prisma.$executeRawUnsafe(
+                `INSERT INTO "DeletedMember" (
+                    "id", "memberType", "originalId", "receiptNo", "memberNo", "fullName",
+                    "designation", "mobileNo", "email", "address", "gaav", "taluka",
+                    "city", "district", "state", "country", "pincode", "photoUrl",
+                    "registrationFee", "paymentMethod", "paymentReference", "referredBy",
+                    "registrationDate", "familyMembers", "fullData", "deletedAt", "deletedBy", "reason"
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24::jsonb, $25::jsonb, $26, $27, $28)`,
+                delId,
+                isExecutiveReceipt ? "EXECUTIVE" : "PRIMARY",
+                target.id,
+                target.receiptNo,
+                main?.memberNo || null,
+                main?.fullName || "अज्ञात",
+                isExecutiveReceipt ? "कार्यकारिणी सदस्य (Executive Member)" : "प्राथमिक सदस्य (Primary Member)",
+                main?.mobileNo || "-",
+                null,
+                target.address || null,
+                target.gaav || null,
+                target.taluka || null,
+                target.city || "अमरावती",
+                target.district || "अमरावती",
+                target.state || "महाराष्ट्र",
+                target.country || "भारत",
+                target.pincode || null,
+                null,
+                target.registrationFee || 0,
+                target.paymentMethod || null,
+                target.paymentReference || null,
+                target.referredBy || null,
+                target.date || null,
+                JSON.stringify(target.familyMembers || []),
+                JSON.stringify(target),
+                new Date(),
+                deletedBy || "Admin",
+                reason || (isExecutiveReceipt ? "Executive Registration Deleted" : "Primary Member Registration Deleted")
+            );
+        } catch (archiveErr) {
+            console.warn("Failed to archive deleted primary registration to DeletedMember:", archiveErr);
+        }
 
         // Use transaction to delete family members, main members, and registration
         const [deletedFamily, deletedMain, deletedReg] = await prisma.$transaction([
@@ -102,7 +152,9 @@ const deleteRegistrationByIdOrReceipt = async (identifier: string) => {
 app.delete("/api/register/:id", async (req: Request, res: Response) => {
     try {
         const identifier = String(req.params.id);
-        const result = await deleteRegistrationByIdOrReceipt(identifier);
+        const reason = req.body?.reason ? String(req.body.reason) : undefined;
+        const deletedBy = req.body?.deletedBy ? String(req.body.deletedBy) : undefined;
+        const result = await deleteRegistrationByIdOrReceipt(identifier, reason, deletedBy);
 
         if (!result) {
             res.status(404).json({
@@ -114,7 +166,7 @@ app.delete("/api/register/:id", async (req: Request, res: Response) => {
 
         res.json({
             success: true,
-            message: "नोंदणी अर्ज यशस्वीरित्या डेटाबेसमधून हटवला गेला",
+            message: "नोंदणी अर्ज यशस्वीरित्या डेटाबेसमधून हटवला गेला व हटवलेल्या सदस्यांच्या यादीत संग्रहित झाला",
             data: result.registration,
         });
     } catch (error: any) {
@@ -130,7 +182,9 @@ app.delete("/api/register/:id", async (req: Request, res: Response) => {
 app.post("/api/register/delete/:id", async (req: Request, res: Response) => {
     try {
         const identifier = String(req.params.id);
-        const result = await deleteRegistrationByIdOrReceipt(identifier);
+        const reason = req.body?.reason ? String(req.body.reason) : undefined;
+        const deletedBy = req.body?.deletedBy ? String(req.body.deletedBy) : undefined;
+        const result = await deleteRegistrationByIdOrReceipt(identifier, reason, deletedBy);
 
         if (!result) {
             res.status(404).json({
@@ -142,7 +196,7 @@ app.post("/api/register/delete/:id", async (req: Request, res: Response) => {
 
         res.json({
             success: true,
-            message: "नोंदणी अर्ज यशस्वीरित्या डेटाबेसमधून हटवला गेला",
+            message: "नोंदणी अर्ज यशस्वीरित्या डेटाबेसमधून हटवला गेला व हटवलेल्या सदस्यांच्या यादीत संग्रहित झाला",
             data: result.registration,
         });
     } catch (error: any) {
@@ -158,7 +212,9 @@ app.post("/api/register/delete/:id", async (req: Request, res: Response) => {
 app.delete("/api/registrations/:id", async (req: Request, res: Response) => {
     try {
         const identifier = String(req.params.id);
-        const result = await deleteRegistrationByIdOrReceipt(identifier);
+        const reason = req.body?.reason ? String(req.body.reason) : undefined;
+        const deletedBy = req.body?.deletedBy ? String(req.body.deletedBy) : undefined;
+        const result = await deleteRegistrationByIdOrReceipt(identifier, reason, deletedBy);
 
         if (!result) {
             res.status(404).json({
@@ -170,7 +226,7 @@ app.delete("/api/registrations/:id", async (req: Request, res: Response) => {
 
         res.json({
             success: true,
-            message: "नोंदणी अर्ज यशस्वीरित्या डेटाबेसमधून हटवला गेला",
+            message: "नोंदणी अर्ज यशस्वीरित्या डेटाबेसमधून हटवला गेला व हटवलेल्या सदस्यांच्या यादीत संग्रहित झाला",
             data: result.registration,
         });
     } catch (error: any) {
@@ -1934,6 +1990,11 @@ interface ExecutiveMemberRecordItem {
     pincode?: string | null;
     photoUrl?: string | null;
     status: string;
+    receiptNo?: string | null;
+    memberNo?: string | null;
+    seriesNo?: string | null;
+    registrationFee?: number | null;
+    paymentMethod?: string | null;
     createdAt: string;
     updatedAt: string;
 }
@@ -2252,6 +2313,7 @@ const handleExecutiveDelete = async (req: Request, res: Response) => {
         }
 
         // 3. Delete any linked MemberRegistration / MainMember records from PostgreSQL DB
+        let linkedDeletedCount = 0;
         try {
             const orConditions: any[] = [{ receiptNo: id }];
             if (mobileToPurge) orConditions.push({ mainMembers: { some: { mobileNo: mobileToPurge } } });
@@ -2263,10 +2325,58 @@ const handleExecutiveDelete = async (req: Request, res: Response) => {
             });
 
             for (const reg of linkedRegs) {
-                await deleteRegistrationByIdOrReceipt(reg.id);
+                await deleteRegistrationByIdOrReceipt(reg.id, "Executive registration deleted", "Super Admin");
+                linkedDeletedCount++;
             }
         } catch (regErr) {
             console.warn("Linked registration purge warning:", regErr);
+        }
+
+        // If no linked registration was archived, archive the executive member directly into DeletedMember
+        if (linkedDeletedCount === 0 && (targetExec || storeMatch)) {
+            try {
+                const execItem = targetExec || storeMatch;
+                const delId = `del_exec_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+                await prisma.$executeRawUnsafe(
+                    `INSERT INTO "DeletedMember" (
+                        "id", "memberType", "originalId", "receiptNo", "memberNo", "fullName",
+                        "designation", "mobileNo", "email", "address", "gaav", "taluka",
+                        "city", "district", "state", "country", "pincode", "photoUrl",
+                        "registrationFee", "paymentMethod", "paymentReference", "referredBy",
+                        "registrationDate", "familyMembers", "fullData", "deletedAt", "deletedBy", "reason"
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24::jsonb, $25::jsonb, $26, $27, $28)`,
+                    delId,
+                    "EXECUTIVE",
+                    execItem.id || id,
+                    execItem.receiptNo || null,
+                    execItem.memberNo || execItem.seriesNo || null,
+                    execItem.fullName || nameToPurge || "अज्ञात",
+                    execItem.designation || "कार्यकारिणी सदस्य",
+                    execItem.mobileNo || mobileToPurge || "-",
+                    null,
+                    execItem.address || null,
+                    execItem.gaav || null,
+                    execItem.taluka || null,
+                    execItem.city || "अमरावती",
+                    execItem.district || "अमरावती",
+                    execItem.state || "महाराष्ट्र",
+                    execItem.country || "भारत",
+                    execItem.pincode || null,
+                    execItem.photoUrl || null,
+                    execItem.registrationFee || 1001,
+                    execItem.paymentMethod || "Cash",
+                    null,
+                    "Super Admin",
+                    execItem.createdAt ? new Date(execItem.createdAt).toISOString().slice(0, 10) : null,
+                    JSON.stringify([]),
+                    JSON.stringify({ exec: execItem }),
+                    new Date(),
+                    "Super Admin",
+                    "Executive member deleted"
+                );
+            } catch (archiveErr) {
+                console.warn("Failed to archive deleted standalone executive:", archiveErr);
+            }
         }
 
         // 4. Purge from local JSON store
@@ -2285,7 +2395,7 @@ const handleExecutiveDelete = async (req: Request, res: Response) => {
 
         res.json({
             success: true,
-            message: "कार्यकारिणी सदस्य व संबंधित डेटाबेसमधील सर्व नोंदी यशस्वीरित्या हटवल्या गेल्या.",
+            message: "कार्यकारिणी सदस्य व संबंधित डेटाबेसमधील सर्व नोंदी यशस्वीरित्या हटवल्या गेल्या व हटवलेल्या सदस्यांच्या यादीत संग्रहित झाल्या.",
             data: deleted || targetExec || { id },
         });
     } catch (error: any) {
@@ -2296,6 +2406,311 @@ const handleExecutiveDelete = async (req: Request, res: Response) => {
 
 app.delete(["/api/executives/:id", "/api/executives/delete/:id"], handleExecutiveDelete);
 app.post(["/api/executives/delete/:id"], handleExecutiveDelete);
+
+// ==================== DELETED MEMBERS MANAGEMENT ENDPOINTS ====================
+
+// GET /api/deleted-members - Fetch all deleted members (both Primary and Executive)
+app.get(["/api/deleted-members", "/api/deleted-members/all"], async (req: Request, res: Response) => {
+    try {
+        const memberType = String(req.query.type || "ALL").toUpperCase();
+        const search = String(req.query.search || "").trim();
+
+        let query = `SELECT * FROM "DeletedMember"`;
+        const conditions: string[] = [];
+        const params: any[] = [];
+
+        if (memberType === "PRIMARY" || memberType === "EXECUTIVE") {
+            params.push(memberType);
+            conditions.push(`"memberType" = $${params.length}`);
+        }
+
+        if (search) {
+            params.push(`%${search}%`);
+            const pIdx = `$${params.length}`;
+            conditions.push(`(
+                "fullName" ILIKE ${pIdx} OR
+                "mobileNo" ILIKE ${pIdx} OR
+                "receiptNo" ILIKE ${pIdx} OR
+                "memberNo" ILIKE ${pIdx} OR
+                "city" ILIKE ${pIdx} OR
+                "district" ILIKE ${pIdx} OR
+                "designation" ILIKE ${pIdx}
+            )`);
+        }
+
+        if (conditions.length > 0) {
+            query += ` WHERE ` + conditions.join(" AND ");
+        }
+
+        query += ` ORDER BY "deletedAt" DESC`;
+
+        const rows: any[] = await withDbRetry(() => prisma.$queryRawUnsafe(query, ...params));
+
+        const formatted = rows.map((r) => {
+            let familyMembers = r.familyMembers;
+            if (typeof familyMembers === "string") {
+                try { familyMembers = JSON.parse(familyMembers); } catch (_) {}
+            }
+            let fullData = r.fullData;
+            if (typeof fullData === "string") {
+                try { fullData = JSON.parse(fullData); } catch (_) {}
+            }
+            let mainMembers = fullData?.mainMembers || [];
+            if (typeof mainMembers === "string") {
+                try { mainMembers = JSON.parse(mainMembers); } catch (_) {}
+            }
+            if (!Array.isArray(mainMembers) || mainMembers.length === 0) {
+                mainMembers = [{
+                    srNo: 1,
+                    fullName: r.fullName,
+                    memberNo: r.memberNo || "-",
+                    mobileNo: r.mobileNo || "-",
+                    prabhagNo: "-",
+                }];
+            }
+            return {
+                ...r,
+                mainMembers,
+                familyMembers: Array.isArray(familyMembers) ? familyMembers : [],
+                fullData,
+                deletedAt: r.deletedAt instanceof Date ? r.deletedAt.toISOString() : String(r.deletedAt)
+            };
+        });
+
+        res.json({ success: true, data: formatted });
+    } catch (error: any) {
+        console.error("Fetch Deleted Members Error:", error);
+        res.status(500).json({ success: false, error: "डेटाबेस सर्व्हर त्रुटी: हटवलेल्या सदस्यांची माहिती आणता आली नाही." });
+    }
+});
+
+// GET /api/deleted-members/:id - Fetch single deleted member details
+app.get("/api/deleted-members/:id", async (req: Request, res: Response) => {
+    try {
+        const id = String(req.params.id);
+        const rows: any[] = await withDbRetry(() => prisma.$queryRawUnsafe(
+            `SELECT * FROM "DeletedMember" WHERE "id" = $1 LIMIT 1`,
+            id
+        ));
+
+        if (!rows || rows.length === 0) {
+            res.status(404).json({ success: false, error: "हटवलेला सदस्य सापडला नाही!" });
+            return;
+        }
+
+        const r = rows[0];
+        let familyMembers = r.familyMembers;
+        if (typeof familyMembers === "string") {
+            try { familyMembers = JSON.parse(familyMembers); } catch (_) {}
+        }
+        let fullData = r.fullData;
+        if (typeof fullData === "string") {
+            try { fullData = JSON.parse(fullData); } catch (_) {}
+        }
+        let mainMembers = fullData?.mainMembers || [];
+        if (typeof mainMembers === "string") {
+            try { mainMembers = JSON.parse(mainMembers); } catch (_) {}
+        }
+        if (!Array.isArray(mainMembers) || mainMembers.length === 0) {
+            mainMembers = [{
+                srNo: 1,
+                fullName: r.fullName,
+                memberNo: r.memberNo || "-",
+                mobileNo: r.mobileNo || "-",
+                prabhagNo: "-",
+            }];
+        }
+
+        res.json({
+            success: true,
+            data: {
+                ...r,
+                mainMembers,
+                familyMembers: Array.isArray(familyMembers) ? familyMembers : [],
+                fullData,
+                deletedAt: r.deletedAt instanceof Date ? r.deletedAt.toISOString() : String(r.deletedAt)
+            }
+        });
+    } catch (error: any) {
+        console.error("Fetch Single Deleted Member Error:", error);
+        res.status(500).json({ success: false, error: "डेटाबेस सर्व्हर त्रुटी: तपशील आणता आले नाहीत." });
+    }
+});
+
+// POST /api/deleted-members/restore/:id - Restore a deleted member back to active
+app.post("/api/deleted-members/restore/:id", async (req: Request, res: Response) => {
+    try {
+        const id = String(req.params.id);
+        const rows: any[] = await withDbRetry(() => prisma.$queryRawUnsafe(
+            `SELECT * FROM "DeletedMember" WHERE "id" = $1 LIMIT 1`,
+            id
+        ));
+
+        if (!rows || rows.length === 0) {
+            res.status(404).json({ success: false, error: "हटवलेला सदस्य सापडला नाही!" });
+            return;
+        }
+
+        const item = rows[0];
+        let fullData: any = item.fullData;
+        if (typeof fullData === "string") {
+            try { fullData = JSON.parse(fullData); } catch (_) {}
+        }
+
+        if (item.memberType === "PRIMARY") {
+            const regData = fullData || {};
+            const regId = item.originalId || `reg_${Date.now()}`;
+            const receiptNo = item.receiptNo || `MPTM-R${Date.now().toString().slice(-5)}`;
+
+            // Check if receipt already exists
+            const existing = await prisma.memberRegistration.findFirst({
+                where: { OR: [{ id: regId }, { receiptNo }] }
+            });
+
+            if (existing) {
+                res.status(400).json({ success: false, error: `या पावती क्रमांकाची (${receiptNo}) नोंदणी आधीपासून डेटाबेसमध्ये सक्रिय आहे!` });
+                return;
+            }
+
+            // Restore MemberRegistration
+            await withDbRetry(() => prisma.memberRegistration.create({
+                data: {
+                    id: regId,
+                    receiptNo: receiptNo,
+                    date: item.registrationDate || new Date().toISOString().slice(0, 10),
+                    registrationFee: item.registrationFee || 500,
+                    amountInWords: regData.amountInWords || "",
+                    address: item.address || "",
+                    gaav: item.gaav || null,
+                    taluka: item.taluka || null,
+                    city: item.city || "अमरावती",
+                    district: item.district || "अमरावती",
+                    state: item.state || "महाराष्ट्र",
+                    country: item.country || "भारत",
+                    pincode: item.pincode || null,
+                    paymentMethod: item.paymentMethod || "Cash",
+                    paymentScreenshot: regData.paymentScreenshot || null,
+                    referredBy: item.referredBy || null,
+                    publicToken: regData.publicToken || `tok_${Date.now()}`,
+                    status: "ACTIVE",
+                    paymentMode: regData.paymentMode || (item.paymentMethod === "Cash" ? "CASH" : "ONLINE"),
+                    paymentReference: item.paymentReference || null,
+                    amountPaise: regData.amountPaise || (item.registrationFee ? item.registrationFee * 100 : null),
+                    mainMembers: {
+                        create: (regData.mainMembers && regData.mainMembers.length > 0)
+                            ? regData.mainMembers.map((m: any, idx: number) => ({
+                                srNo: m.srNo || idx + 1,
+                                memberNo: m.memberNo || item.memberNo || `MPTM-M${Date.now().toString().slice(-4)}`,
+                                fullName: m.fullName || item.fullName,
+                                mobileNo: m.mobileNo || item.mobileNo,
+                                prabhagNo: m.prabhagNo || "-",
+                            }))
+                            : [{
+                                srNo: 1,
+                                memberNo: item.memberNo || `MPTM-M${Date.now().toString().slice(-4)}`,
+                                fullName: item.fullName,
+                                mobileNo: item.mobileNo,
+                                prabhagNo: "-",
+                            }]
+                    },
+                    familyMembers: {
+                        create: (regData.familyMembers && regData.familyMembers.length > 0)
+                            ? regData.familyMembers.map((f: any, idx: number) => ({
+                                srNo: f.srNo || idx + 1,
+                                name: f.name || "",
+                                relation: f.relation || "",
+                                dob: f.dob || "",
+                                occupation: f.occupation || "",
+                                mobile: f.mobile || "",
+                            }))
+                            : []
+                    }
+                }
+            }));
+        } else {
+            // EXECUTIVE restore
+            const execModel = getExecutivePrismaModel();
+            const execData = fullData?.exec || fullData || {};
+            const execId = item.originalId || `exec_${Date.now()}`;
+
+            if (execModel) {
+                await withDbRetry(() => execModel.create({
+                    data: {
+                        id: execId,
+                        fullName: item.fullName,
+                        designation: item.designation || "कार्यकारिणी सदस्य",
+                        mobileNo: item.mobileNo,
+                        address: item.address || null,
+                        gaav: item.gaav || null,
+                        taluka: item.taluka || null,
+                        city: item.city || "अमरावती",
+                        district: item.district || "अमरावती",
+                        state: item.state || "महाराष्ट्र",
+                        country: item.country || "भारत",
+                        pincode: item.pincode || null,
+                        photoUrl: item.photoUrl || null,
+                        status: "ACTIVE",
+                    }
+                }));
+            }
+
+            // Restore in local store as well
+            executivesStore.push({
+                id: execId,
+                fullName: item.fullName,
+                designation: item.designation || "कार्यकारिणी सदस्य",
+                mobileNo: item.mobileNo,
+                address: item.address || "",
+                gaav: item.gaav || "",
+                taluka: item.taluka || "",
+                city: item.city || "अमरावती",
+                district: item.district || "अमरावती",
+                state: item.state || "Maharashtra",
+                country: item.country || "India",
+                pincode: item.pincode || "",
+                photoUrl: item.photoUrl || "",
+                status: "ACTIVE",
+                receiptNo: item.receiptNo || null,
+                memberNo: item.memberNo || null,
+                seriesNo: item.memberNo || null,
+                registrationFee: item.registrationFee || 1001,
+                paymentMethod: item.paymentMethod || "Cash",
+                createdAt: item.registrationDate ? new Date(item.registrationDate).toISOString() : new Date().toISOString(),
+                updatedAt: new Date().toISOString()
+            });
+            saveExecutivesToFile(executivesStore);
+        }
+
+        // Remove from DeletedMember table
+        await withDbRetry(() => prisma.$executeRawUnsafe(
+            `DELETE FROM "DeletedMember" WHERE "id" = $1`,
+            id
+        ));
+
+        res.json({
+            success: true,
+            message: "सदस्य यशस्वीरित्या मुख्य यादीमध्ये पूर्ववत (Restore) करण्यात आला आहे!"
+        });
+    } catch (error: any) {
+        console.error("Restore Deleted Member Error:", error);
+        res.status(500).json({ success: false, error: "सदस्य पूर्ववत करताना सर्व्हर त्रुटी: " + (error.message || "") });
+    }
+});
+
+// DELETE /api/deleted-members/:id - Permanently delete member from DeletedMember archive
+app.delete(["/api/deleted-members/:id", "/api/deleted-members/delete/:id"], async (req: Request, res: Response) => {
+    try {
+        const id = String(req.params.id);
+        await withDbRetry(() => prisma.$executeRawUnsafe(
+            `DELETE FROM "DeletedMember" WHERE "id" = $1`,
+            id
+        ));
+        res.json({ success: true, message: "सदस्य कायमस्वरूपी हटवला गेला आहे." });
+    } catch (error: any) {
+        console.error("Permanent Delete Member Error:", error);
+        res.status(500).json({ success: false, error: "कायमचे हटवताना सर्व्हर त्रुटी झाली." });
+    }
+});
 
 // ==================== ADS MANAGEMENT ENDPOINTS ====================
 export interface SocialLinks {
@@ -2323,63 +2738,6 @@ export interface AdItem {
     updatedAt?: string;
 }
 
-const getAdsFilePath = (): string => {
-    const possiblePaths = [
-        path.join(__dirname, "../ads.json"),
-        path.join(__dirname, "ads.json"),
-        path.join(process.cwd(), "ads.json"),
-        "/tmp/ads.json"
-    ];
-    for (const p of possiblePaths) {
-        if (fs.existsSync(p)) return p;
-    }
-    return path.join(process.cwd(), "ads.json");
-};
-
-const loadAdsFromFile = (): AdItem[] => {
-    const possiblePaths = [
-        path.join(__dirname, "../ads.json"),
-        path.join(__dirname, "ads.json"),
-        path.join(process.cwd(), "ads.json"),
-        "/tmp/ads.json"
-    ];
-    for (const p of possiblePaths) {
-        try {
-            if (fs.existsSync(p)) {
-                const raw = fs.readFileSync(p, "utf-8");
-                const parsed = JSON.parse(raw);
-                if (Array.isArray(parsed)) return parsed;
-            }
-        } catch (e) {
-            console.error("Error reading ads file from", p, e);
-        }
-    }
-    const defaultAds: AdItem[] = [];
-    try {
-        const targetPath = getAdsFilePath();
-        fs.writeFileSync(targetPath, JSON.stringify(defaultAds, null, 2), "utf-8");
-    } catch (e) {
-        console.error("Error writing default ads file:", e);
-    }
-    return defaultAds;
-};
-
-const saveAdsToFile = (ads: AdItem[]) => {
-    try {
-        const targetPath = getAdsFilePath();
-        fs.writeFileSync(targetPath, JSON.stringify(ads, null, 2), "utf-8");
-    } catch (e) {
-        console.error("Error saving ads file:", e);
-        try {
-            fs.writeFileSync("/tmp/ads.json", JSON.stringify(ads, null, 2), "utf-8");
-        } catch (tmpErr) {
-            console.error("Error saving ads to /tmp:", tmpErr);
-        }
-    }
-};
-
-let adsStore: AdItem[] = loadAdsFromFile();
-
 const formatDbAd = (ad: any): AdItem => {
     let socialLinks: SocialLinks = {};
     if (ad.socialLinks) {
@@ -2402,41 +2760,34 @@ const formatDbAd = (ad: any): AdItem => {
     };
 };
 
-// GET /api/ads - Get all ads (Database first with JSON fallback)
+// GET /api/ads - Get all ads directly from Database
 app.get(["/api/ads", "/ads", "/api/ads/all"], async (req: Request, res: Response) => {
     try {
         const dbAds = await withDbRetry(() => prisma.advertisement.findMany({
             orderBy: [{ order: "asc" }, { createdAt: "desc" }],
         }));
-        if (dbAds && dbAds.length > 0) {
-            return res.json({ success: true, data: dbAds.map(formatDbAd) });
-        }
-    } catch (dbErr) {
-        console.warn("DB ads fetch warning, using JSON fallback:", (dbErr as any)?.message || dbErr);
+        res.json({ success: true, data: dbAds.map(formatDbAd) });
+    } catch (err: any) {
+        console.error("Fetch ads error:", err);
+        res.status(500).json({ success: false, error: "Database error: Failed to fetch advertisements." });
     }
-    adsStore = loadAdsFromFile();
-    res.json({ success: true, data: adsStore });
 });
 
-// GET /api/ads/active - Get active ads for website front page popup (Database first with JSON fallback)
+// GET /api/ads/active - Get active ads for website front page popup directly from Database
 app.get(["/api/ads/active", "/ads/active"], async (req: Request, res: Response) => {
     try {
         const dbAds = await withDbRetry(() => prisma.advertisement.findMany({
             where: { isActive: true },
             orderBy: [{ order: "asc" }, { createdAt: "desc" }],
         }));
-        if (dbAds && dbAds.length > 0) {
-            return res.json({ success: true, data: dbAds.map(formatDbAd) });
-        }
-    } catch (dbErr) {
-        console.warn("DB active ads fetch warning, using JSON fallback:", (dbErr as any)?.message || dbErr);
+        res.json({ success: true, data: dbAds.map(formatDbAd) });
+    } catch (err: any) {
+        console.error("Fetch active ads error:", err);
+        res.status(500).json({ success: false, error: "Database error: Failed to fetch active advertisements." });
     }
-    adsStore = loadAdsFromFile();
-    const activeAds = adsStore.filter((ad) => ad.isActive);
-    res.json({ success: true, data: activeAds });
 });
 
-// POST & PUT /api/ads/reorder - Save new display order of advertisements (Database first with JSON backup)
+// POST & PUT /api/ads/reorder - Save new display sequence of advertisements in Database
 app.post(["/api/ads/reorder", "/ads/reorder"], async (req: Request, res: Response) => {
     try {
         const { ads: newAdsOrder } = req.body;
@@ -2445,36 +2796,31 @@ app.post(["/api/ads/reorder", "/ads/reorder"], async (req: Request, res: Respons
             return;
         }
 
-        // 1. Update order in Database
-        try {
-            await Promise.all(
-                newAdsOrder.map((ad: any, index: number) =>
-                    withDbRetry(() => prisma.advertisement.updateMany({
-                        where: { id: ad.id },
-                        data: { order: index }
-                    }))
-                )
-            );
-        } catch (dbErr) {
-            console.warn("DB ads reorder warning:", (dbErr as any)?.message || dbErr);
-        }
+        await withDbRetry(() => prisma.$transaction(
+            newAdsOrder.map((ad: any, index: number) =>
+                prisma.advertisement.update({
+                    where: { id: ad.id },
+                    data: { order: index }
+                })
+            )
+        ));
 
-        // 2. Backup to JSON file
-        adsStore = newAdsOrder;
-        saveAdsToFile(adsStore);
+        const updatedAds = await withDbRetry(() => prisma.advertisement.findMany({
+            orderBy: [{ order: "asc" }, { createdAt: "desc" }],
+        }));
 
         res.json({
             success: true,
-            message: "Advertisement sequence updated successfully!",
-            data: adsStore
+            message: "Advertisement sequence updated successfully in database!",
+            data: updatedAds.map(formatDbAd)
         });
     } catch (error: any) {
         console.error("Reorder Ads Error:", error);
-        res.status(500).json({ success: false, error: "Server Error: Failed to save ad order." });
+        res.status(500).json({ success: false, error: "Server Error: Failed to save ad order in database." });
     }
 });
 
-// POST /api/ads - Create a new ad (Database first with JSON backup)
+// POST /api/ads - Create a new ad directly in Database
 app.post(["/api/ads", "/ads"], async (req: Request, res: Response) => {
     try {
         const { title, subtitle, imageUrl, videoUrl, mediaType, adLink, socialLinks, isActive } = req.body;
@@ -2488,151 +2834,80 @@ app.post(["/api/ads", "/ads"], async (req: Request, res: Response) => {
         const cleanSocial = socialLinks || {};
         const activeFlag = isActive !== undefined ? Boolean(isActive) : true;
 
-        // 1. Database first
-        let dbCreated: any = null;
-        try {
-            dbCreated = await withDbRetry(() => prisma.advertisement.create({
-                data: {
-                    id: adId,
-                    title: cleanTitle,
-                    subtitle: cleanSubtitle || null,
-                    imageUrl: cleanImageUrl || null,
-                    videoUrl: cleanVideoUrl || null,
-                    mediaType: finalMediaType,
-                    adLink: cleanAdLink || null,
-                    socialLinks: JSON.stringify(cleanSocial),
-                    isActive: activeFlag,
-                    order: 0,
-                }
-            }));
-        } catch (dbErr) {
-            console.error("DB create ad error:", dbErr);
-        }
-
-        // 2. Backup to JSON file
-        const newAd: AdItem = {
-            id: dbCreated ? dbCreated.id : adId,
-            title: cleanTitle,
-            subtitle: cleanSubtitle,
-            imageUrl: cleanImageUrl,
-            videoUrl: cleanVideoUrl,
-            mediaType: finalMediaType,
-            adLink: cleanAdLink,
-            socialLinks: cleanSocial,
-            isActive: activeFlag,
-            createdAt: dbCreated ? dbCreated.createdAt.toISOString() : new Date().toISOString()
-        };
-
-        adsStore.unshift(newAd);
-        saveAdsToFile(adsStore);
+        const dbCreated = await withDbRetry(() => prisma.advertisement.create({
+            data: {
+                id: adId,
+                title: cleanTitle,
+                subtitle: cleanSubtitle || null,
+                imageUrl: cleanImageUrl || null,
+                videoUrl: cleanVideoUrl || null,
+                mediaType: finalMediaType,
+                adLink: cleanAdLink || null,
+                socialLinks: JSON.stringify(cleanSocial),
+                isActive: activeFlag,
+                order: 0,
+            }
+        }));
 
         res.json({
             success: true,
-            message: "Advertisement created successfully!",
-            data: newAd
+            message: "Advertisement created and stored in database successfully!",
+            data: formatDbAd(dbCreated)
         });
     } catch (error: any) {
         console.error("Create Ad Error:", error);
-        res.status(500).json({ success: false, error: "Server Error: Failed to create ad." });
+        res.status(500).json({ success: false, error: "Server Error: Failed to create ad in database." });
     }
 });
 
-// PUT & POST /api/ads/:id - Update an ad (Database first with JSON backup)
+// PUT & POST /api/ads/:id - Update an ad in Database
 app.put(["/api/ads/:id", "/ads/:id", "/api/ads/update/:id"], async (req: Request, res: Response) => {
     try {
         const id = String(req.params.id);
         const { title, subtitle, imageUrl, videoUrl, mediaType, adLink, socialLinks, isActive } = req.body;
 
-        // 1. Update in Database
-        let dbUpdated: any = null;
-        try {
-            dbUpdated = await withDbRetry(() => prisma.advertisement.update({
-                where: { id },
-                data: {
-                    ...(title !== undefined && { title: String(title).trim() }),
-                    ...(subtitle !== undefined && { subtitle: String(subtitle).trim() }),
-                    ...(imageUrl !== undefined && { imageUrl: String(imageUrl).trim() }),
-                    ...(videoUrl !== undefined && { videoUrl: String(videoUrl).trim() }),
-                    ...(mediaType !== undefined && { mediaType: mediaType === "video" ? "video" : "image" }),
-                    ...(adLink !== undefined && { adLink: String(adLink).trim() }),
-                    ...(socialLinks !== undefined && { socialLinks: JSON.stringify(socialLinks) }),
-                    ...(isActive !== undefined && { isActive: Boolean(isActive) }),
-                }
-            }));
-        } catch (dbErr) {
-            console.warn("DB update ad warning:", (dbErr as any)?.message || dbErr);
-        }
-
-        // 2. Update in JSON store
-        const idx = adsStore.findIndex((a) => a.id === id);
-        if (idx !== -1) {
-            adsStore[idx] = {
-                ...adsStore[idx],
+        const dbUpdated = await withDbRetry(() => prisma.advertisement.update({
+            where: { id },
+            data: {
                 ...(title !== undefined && { title: String(title).trim() }),
                 ...(subtitle !== undefined && { subtitle: String(subtitle).trim() }),
                 ...(imageUrl !== undefined && { imageUrl: String(imageUrl).trim() }),
                 ...(videoUrl !== undefined && { videoUrl: String(videoUrl).trim() }),
                 ...(mediaType !== undefined && { mediaType: mediaType === "video" ? "video" : "image" }),
                 ...(adLink !== undefined && { adLink: String(adLink).trim() }),
-                ...(socialLinks !== undefined && { socialLinks }),
+                ...(socialLinks !== undefined && { socialLinks: JSON.stringify(socialLinks) }),
                 ...(isActive !== undefined && { isActive: Boolean(isActive) }),
-                updatedAt: new Date().toISOString()
-            };
-            saveAdsToFile(adsStore);
-        }
-
-        if (idx === -1 && !dbUpdated) {
-            res.status(404).json({ success: false, error: "Advertisement not found" });
-            return;
-        }
+            }
+        }));
 
         res.json({
             success: true,
-            message: "Advertisement updated successfully!",
-            data: idx !== -1 ? adsStore[idx] : formatDbAd(dbUpdated)
+            message: "Advertisement updated in database successfully!",
+            data: formatDbAd(dbUpdated)
         });
     } catch (error: any) {
         console.error("Update Ad Error:", error);
-        res.status(500).json({ success: false, error: "Server Error: Failed to update ad." });
+        res.status(500).json({ success: false, error: "Server Error: Failed to update ad in database." });
     }
 });
 
-// DELETE /api/ads/:id - Delete an ad (Database first with JSON backup)
+// DELETE /api/ads/:id - Delete an ad from Database
 app.delete(["/api/ads/:id", "/api/ads/delete/:id", "/ads/:id", "/ads/delete/:id"], async (req: Request, res: Response) => {
     try {
         const id = String(req.params.id);
 
-        // 1. Delete from Database
-        let dbDeleted: any = null;
-        try {
-            dbDeleted = await withDbRetry(() => prisma.advertisement.delete({
-                where: { id }
-            }));
-        } catch (dbErr) {
-            console.warn("DB delete ad warning:", (dbErr as any)?.message || dbErr);
-        }
-
-        // 2. Delete from JSON file
-        const idx = adsStore.findIndex((a) => a.id === id);
-        let fileDeleted: any = null;
-        if (idx !== -1) {
-            fileDeleted = adsStore.splice(idx, 1)[0];
-            saveAdsToFile(adsStore);
-        }
-
-        if (!dbDeleted && !fileDeleted) {
-            res.status(404).json({ success: false, error: "Advertisement not found" });
-            return;
-        }
+        const dbDeleted = await withDbRetry(() => prisma.advertisement.delete({
+            where: { id }
+        }));
 
         res.json({
             success: true,
-            message: "Advertisement deleted successfully",
-            data: fileDeleted || (dbDeleted ? formatDbAd(dbDeleted) : { id })
+            message: "Advertisement deleted from database successfully",
+            data: formatDbAd(dbDeleted)
         });
     } catch (error: any) {
         console.error("Delete Ad Error:", error);
-        res.status(500).json({ success: false, error: "Server Error: Failed to delete ad." });
+        res.status(500).json({ success: false, error: "Server Error: Failed to delete ad from database." });
     }
 });
 

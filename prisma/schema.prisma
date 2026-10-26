@@ -271,3 +271,39 @@ model AuditLog {
   createdAt DateTime @default(now())
 }
 
+// ── NEW: DeletedMember ────────────────────────────────────
+model DeletedMember {
+  id               String   @id @default(cuid())
+  memberType       String   // "PRIMARY" | "EXECUTIVE"
+  originalId       String?
+  receiptNo        String?
+  memberNo         String?
+  fullName         String
+  designation      String?
+  mobileNo         String
+  email            String?
+  address          String?
+  gaav             String?
+  taluka           String?
+  city             String?  @default("अमरावती")
+  district         String?  @default("अमरावती")
+  state            String?  @default("महाराष्ट्र")
+  country          String?  @default("भारत")
+  pincode          String?
+  photoUrl         String?
+  registrationFee  Int?
+  paymentMethod    String?
+  paymentReference String?
+  referredBy       String?
+  registrationDate String?
+  familyMembers    Json?
+  fullData         Json?
+  deletedAt        DateTime @default(now())
+  deletedBy        String?
+  reason           String?
+
+  @@index([memberType])
+  @@index([deletedAt])
+  @@index([mobileNo])
+}
+

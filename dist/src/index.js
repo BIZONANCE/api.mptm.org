@@ -2063,65 +2063,6 @@ const handleExecutiveDelete = async (req, res) => {
 };
 app.delete(["/api/executives/:id", "/api/executives/delete/:id"], handleExecutiveDelete);
 app.post(["/api/executives/delete/:id"], handleExecutiveDelete);
-const getAdsFilePath = () => {
-    const possiblePaths = [
-        path_1.default.join(__dirname, "../ads.json"),
-        path_1.default.join(__dirname, "ads.json"),
-        path_1.default.join(process.cwd(), "ads.json"),
-        "/tmp/ads.json"
-    ];
-    for (const p of possiblePaths) {
-        if (fs_1.default.existsSync(p))
-            return p;
-    }
-    return path_1.default.join(process.cwd(), "ads.json");
-};
-const loadAdsFromFile = () => {
-    const possiblePaths = [
-        path_1.default.join(__dirname, "../ads.json"),
-        path_1.default.join(__dirname, "ads.json"),
-        path_1.default.join(process.cwd(), "ads.json"),
-        "/tmp/ads.json"
-    ];
-    for (const p of possiblePaths) {
-        try {
-            if (fs_1.default.existsSync(p)) {
-                const raw = fs_1.default.readFileSync(p, "utf-8");
-                const parsed = JSON.parse(raw);
-                if (Array.isArray(parsed))
-                    return parsed;
-            }
-        }
-        catch (e) {
-            console.error("Error reading ads file from", p, e);
-        }
-    }
-    const defaultAds = [];
-    try {
-        const targetPath = getAdsFilePath();
-        fs_1.default.writeFileSync(targetPath, JSON.stringify(defaultAds, null, 2), "utf-8");
-    }
-    catch (e) {
-        console.error("Error writing default ads file:", e);
-    }
-    return defaultAds;
-};
-const saveAdsToFile = (ads) => {
-    try {
-        const targetPath = getAdsFilePath();
-        fs_1.default.writeFileSync(targetPath, JSON.stringify(ads, null, 2), "utf-8");
-    }
-    catch (e) {
-        console.error("Error saving ads file:", e);
-        try {
-            fs_1.default.writeFileSync("/tmp/ads.json", JSON.stringify(ads, null, 2), "utf-8");
-        }
-        catch (tmpErr) {
-            console.error("Error saving ads to /tmp:", tmpErr);
-        }
-    }
-};
-let adsStore = loadAdsFromFile();
 const formatDbAd = (ad) => {
     let socialLinks = {};
     if (ad.socialLinks) {
@@ -2144,41 +2085,34 @@ const formatDbAd = (ad) => {
         updatedAt: ad.updatedAt instanceof Date ? ad.updatedAt.toISOString() : (ad.updatedAt ? String(ad.updatedAt) : undefined),
     };
 };
-// GET /api/ads - Get all ads (Database first with JSON fallback)
+// GET /api/ads - Get all ads directly from Database
 app.get(["/api/ads", "/ads", "/api/ads/all"], async (req, res) => {
     try {
         const dbAds = await (0, prisma_1.withDbRetry)(() => prisma_1.prisma.advertisement.findMany({
             orderBy: [{ order: "asc" }, { createdAt: "desc" }],
         }));
-        if (dbAds && dbAds.length > 0) {
-            return res.json({ success: true, data: dbAds.map(formatDbAd) });
-        }
+        res.json({ success: true, data: dbAds.map(formatDbAd) });
     }
-    catch (dbErr) {
-        console.warn("DB ads fetch warning, using JSON fallback:", dbErr?.message || dbErr);
+    catch (err) {
+        console.error("Fetch ads error:", err);
+        res.status(500).json({ success: false, error: "Database error: Failed to fetch advertisements." });
     }
-    adsStore = loadAdsFromFile();
-    res.json({ success: true, data: adsStore });
 });
-// GET /api/ads/active - Get active ads for website front page popup (Database first with JSON fallback)
+// GET /api/ads/active - Get active ads for website front page popup directly from Database
 app.get(["/api/ads/active", "/ads/active"], async (req, res) => {
     try {
         const dbAds = await (0, prisma_1.withDbRetry)(() => prisma_1.prisma.advertisement.findMany({
             where: { isActive: true },
             orderBy: [{ order: "asc" }, { createdAt: "desc" }],
         }));
-        if (dbAds && dbAds.length > 0) {
-            return res.json({ success: true, data: dbAds.map(formatDbAd) });
-        }
+        res.json({ success: true, data: dbAds.map(formatDbAd) });
     }
-    catch (dbErr) {
-        console.warn("DB active ads fetch warning, using JSON fallback:", dbErr?.message || dbErr);
+    catch (err) {
+        console.error("Fetch active ads error:", err);
+        res.status(500).json({ success: false, error: "Database error: Failed to fetch active advertisements." });
     }
-    adsStore = loadAdsFromFile();
-    const activeAds = adsStore.filter((ad) => ad.isActive);
-    res.json({ success: true, data: activeAds });
 });
-// POST & PUT /api/ads/reorder - Save new display order of advertisements (Database first with JSON backup)
+// POST & PUT /api/ads/reorder - Save new display sequence of advertisements in Database
 app.post(["/api/ads/reorder", "/ads/reorder"], async (req, res) => {
     try {
         const { ads: newAdsOrder } = req.body;
@@ -2186,31 +2120,25 @@ app.post(["/api/ads/reorder", "/ads/reorder"], async (req, res) => {
             res.status(400).json({ success: false, error: "Invalid array of ads provided" });
             return;
         }
-        // 1. Update order in Database
-        try {
-            await Promise.all(newAdsOrder.map((ad, index) => (0, prisma_1.withDbRetry)(() => prisma_1.prisma.advertisement.updateMany({
-                where: { id: ad.id },
-                data: { order: index }
-            }))));
-        }
-        catch (dbErr) {
-            console.warn("DB ads reorder warning:", dbErr?.message || dbErr);
-        }
-        // 2. Backup to JSON file
-        adsStore = newAdsOrder;
-        saveAdsToFile(adsStore);
+        await (0, prisma_1.withDbRetry)(() => prisma_1.prisma.$transaction(newAdsOrder.map((ad, index) => prisma_1.prisma.advertisement.update({
+            where: { id: ad.id },
+            data: { order: index }
+        }))));
+        const updatedAds = await (0, prisma_1.withDbRetry)(() => prisma_1.prisma.advertisement.findMany({
+            orderBy: [{ order: "asc" }, { createdAt: "desc" }],
+        }));
         res.json({
             success: true,
-            message: "Advertisement sequence updated successfully!",
-            data: adsStore
+            message: "Advertisement sequence updated successfully in database!",
+            data: updatedAds.map(formatDbAd)
         });
     }
     catch (error) {
         console.error("Reorder Ads Error:", error);
-        res.status(500).json({ success: false, error: "Server Error: Failed to save ad order." });
+        res.status(500).json({ success: false, error: "Server Error: Failed to save ad order in database." });
     }
 });
-// POST /api/ads - Create a new ad (Database first with JSON backup)
+// POST /api/ads - Create a new ad directly in Database
 app.post(["/api/ads", "/ads"], async (req, res) => {
     try {
         const { title, subtitle, imageUrl, videoUrl, mediaType, adLink, socialLinks, isActive } = req.body;
@@ -2223,144 +2151,76 @@ app.post(["/api/ads", "/ads"], async (req, res) => {
         const cleanAdLink = adLink ? String(adLink).trim() : "";
         const cleanSocial = socialLinks || {};
         const activeFlag = isActive !== undefined ? Boolean(isActive) : true;
-        // 1. Database first
-        let dbCreated = null;
-        try {
-            dbCreated = await (0, prisma_1.withDbRetry)(() => prisma_1.prisma.advertisement.create({
-                data: {
-                    id: adId,
-                    title: cleanTitle,
-                    subtitle: cleanSubtitle || null,
-                    imageUrl: cleanImageUrl || null,
-                    videoUrl: cleanVideoUrl || null,
-                    mediaType: finalMediaType,
-                    adLink: cleanAdLink || null,
-                    socialLinks: JSON.stringify(cleanSocial),
-                    isActive: activeFlag,
-                    order: 0,
-                }
-            }));
-        }
-        catch (dbErr) {
-            console.error("DB create ad error:", dbErr);
-        }
-        // 2. Backup to JSON file
-        const newAd = {
-            id: dbCreated ? dbCreated.id : adId,
-            title: cleanTitle,
-            subtitle: cleanSubtitle,
-            imageUrl: cleanImageUrl,
-            videoUrl: cleanVideoUrl,
-            mediaType: finalMediaType,
-            adLink: cleanAdLink,
-            socialLinks: cleanSocial,
-            isActive: activeFlag,
-            createdAt: dbCreated ? dbCreated.createdAt.toISOString() : new Date().toISOString()
-        };
-        adsStore.unshift(newAd);
-        saveAdsToFile(adsStore);
+        const dbCreated = await (0, prisma_1.withDbRetry)(() => prisma_1.prisma.advertisement.create({
+            data: {
+                id: adId,
+                title: cleanTitle,
+                subtitle: cleanSubtitle || null,
+                imageUrl: cleanImageUrl || null,
+                videoUrl: cleanVideoUrl || null,
+                mediaType: finalMediaType,
+                adLink: cleanAdLink || null,
+                socialLinks: JSON.stringify(cleanSocial),
+                isActive: activeFlag,
+                order: 0,
+            }
+        }));
         res.json({
             success: true,
-            message: "Advertisement created successfully!",
-            data: newAd
+            message: "Advertisement created and stored in database successfully!",
+            data: formatDbAd(dbCreated)
         });
     }
     catch (error) {
         console.error("Create Ad Error:", error);
-        res.status(500).json({ success: false, error: "Server Error: Failed to create ad." });
+        res.status(500).json({ success: false, error: "Server Error: Failed to create ad in database." });
     }
 });
-// PUT & POST /api/ads/:id - Update an ad (Database first with JSON backup)
+// PUT & POST /api/ads/:id - Update an ad in Database
 app.put(["/api/ads/:id", "/ads/:id", "/api/ads/update/:id"], async (req, res) => {
     try {
         const id = String(req.params.id);
         const { title, subtitle, imageUrl, videoUrl, mediaType, adLink, socialLinks, isActive } = req.body;
-        // 1. Update in Database
-        let dbUpdated = null;
-        try {
-            dbUpdated = await (0, prisma_1.withDbRetry)(() => prisma_1.prisma.advertisement.update({
-                where: { id },
-                data: {
-                    ...(title !== undefined && { title: String(title).trim() }),
-                    ...(subtitle !== undefined && { subtitle: String(subtitle).trim() }),
-                    ...(imageUrl !== undefined && { imageUrl: String(imageUrl).trim() }),
-                    ...(videoUrl !== undefined && { videoUrl: String(videoUrl).trim() }),
-                    ...(mediaType !== undefined && { mediaType: mediaType === "video" ? "video" : "image" }),
-                    ...(adLink !== undefined && { adLink: String(adLink).trim() }),
-                    ...(socialLinks !== undefined && { socialLinks: JSON.stringify(socialLinks) }),
-                    ...(isActive !== undefined && { isActive: Boolean(isActive) }),
-                }
-            }));
-        }
-        catch (dbErr) {
-            console.warn("DB update ad warning:", dbErr?.message || dbErr);
-        }
-        // 2. Update in JSON store
-        const idx = adsStore.findIndex((a) => a.id === id);
-        if (idx !== -1) {
-            adsStore[idx] = {
-                ...adsStore[idx],
+        const dbUpdated = await (0, prisma_1.withDbRetry)(() => prisma_1.prisma.advertisement.update({
+            where: { id },
+            data: {
                 ...(title !== undefined && { title: String(title).trim() }),
                 ...(subtitle !== undefined && { subtitle: String(subtitle).trim() }),
                 ...(imageUrl !== undefined && { imageUrl: String(imageUrl).trim() }),
                 ...(videoUrl !== undefined && { videoUrl: String(videoUrl).trim() }),
                 ...(mediaType !== undefined && { mediaType: mediaType === "video" ? "video" : "image" }),
                 ...(adLink !== undefined && { adLink: String(adLink).trim() }),
-                ...(socialLinks !== undefined && { socialLinks }),
+                ...(socialLinks !== undefined && { socialLinks: JSON.stringify(socialLinks) }),
                 ...(isActive !== undefined && { isActive: Boolean(isActive) }),
-                updatedAt: new Date().toISOString()
-            };
-            saveAdsToFile(adsStore);
-        }
-        if (idx === -1 && !dbUpdated) {
-            res.status(404).json({ success: false, error: "Advertisement not found" });
-            return;
-        }
+            }
+        }));
         res.json({
             success: true,
-            message: "Advertisement updated successfully!",
-            data: idx !== -1 ? adsStore[idx] : formatDbAd(dbUpdated)
+            message: "Advertisement updated in database successfully!",
+            data: formatDbAd(dbUpdated)
         });
     }
     catch (error) {
         console.error("Update Ad Error:", error);
-        res.status(500).json({ success: false, error: "Server Error: Failed to update ad." });
+        res.status(500).json({ success: false, error: "Server Error: Failed to update ad in database." });
     }
 });
-// DELETE /api/ads/:id - Delete an ad (Database first with JSON backup)
+// DELETE /api/ads/:id - Delete an ad from Database
 app.delete(["/api/ads/:id", "/api/ads/delete/:id", "/ads/:id", "/ads/delete/:id"], async (req, res) => {
     try {
         const id = String(req.params.id);
-        // 1. Delete from Database
-        let dbDeleted = null;
-        try {
-            dbDeleted = await (0, prisma_1.withDbRetry)(() => prisma_1.prisma.advertisement.delete({
-                where: { id }
-            }));
-        }
-        catch (dbErr) {
-            console.warn("DB delete ad warning:", dbErr?.message || dbErr);
-        }
-        // 2. Delete from JSON file
-        const idx = adsStore.findIndex((a) => a.id === id);
-        let fileDeleted = null;
-        if (idx !== -1) {
-            fileDeleted = adsStore.splice(idx, 1)[0];
-            saveAdsToFile(adsStore);
-        }
-        if (!dbDeleted && !fileDeleted) {
-            res.status(404).json({ success: false, error: "Advertisement not found" });
-            return;
-        }
+        const dbDeleted = await (0, prisma_1.withDbRetry)(() => prisma_1.prisma.advertisement.delete({
+            where: { id }
+        }));
         res.json({
             success: true,
-            message: "Advertisement deleted successfully",
-            data: fileDeleted || (dbDeleted ? formatDbAd(dbDeleted) : { id })
+            message: "Advertisement deleted from database successfully",
+            data: formatDbAd(dbDeleted)
         });
     }
     catch (error) {
         console.error("Delete Ad Error:", error);
-        res.status(500).json({ success: false, error: "Server Error: Failed to delete ad." });
+        res.status(500).json({ success: false, error: "Server Error: Failed to delete ad from database." });
     }
 });
 if (process.env.NODE_ENV !== "production" || !process.env.VERCEL) {
