@@ -59,22 +59,42 @@ app.use(express_1.default.json({
 app.use(express_1.default.urlencoded({ extended: true, limit: "50mb" }));
 // Mount Rebuilt PhonePe & Payment Routes (Stage C)
 app.use("/api", require("./routes/paymentRoutes"));
-// Helper function to delete registration entry cleanly with manual cascade fallback
-const deleteRegistrationByIdOrReceipt = async (identifier) => {
+// Helper function to delete registration entry cleanly with manual cascade fallback and automatic archiving
+const deleteRegistrationByIdOrReceipt = async (identifier, reason, deletedBy) => {
     return (0, prisma_1.withDbRetry)(async () => {
-        // 1. Find target registration by ID or receiptNo
+        // 1. Find target registration by ID or receiptNo (including main and family members)
         const target = await prisma_1.prisma.memberRegistration.findFirst({
             where: {
                 OR: [
                     { id: identifier },
                     { receiptNo: identifier }
                 ]
+            },
+            include: {
+                mainMembers: true,
+                familyMembers: true
             }
         });
         if (!target) {
             return null;
         }
         const regId = target.id;
+        const main = target.mainMembers?.[0];
+        const isExecutiveReceipt = target.receiptNo?.startsWith("MPTM-EM-") || target.registrationFee === 1001;
+        // Archive into DeletedMember table before removal
+        try {
+            const delId = `del_reg_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+            await prisma_1.prisma.$executeRawUnsafe(`INSERT INTO "DeletedMember" (
+                    "id", "memberType", "originalId", "receiptNo", "memberNo", "fullName",
+                    "designation", "mobileNo", "email", "address", "gaav", "taluka",
+                    "city", "district", "state", "country", "pincode", "photoUrl",
+                    "registrationFee", "paymentMethod", "paymentReference", "referredBy",
+                    "registrationDate", "familyMembers", "fullData", "deletedAt", "deletedBy", "reason"
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24::jsonb, $25::jsonb, $26, $27, $28)`, delId, isExecutiveReceipt ? "EXECUTIVE" : "PRIMARY", target.id, target.receiptNo, main?.memberNo || null, main?.fullName || "अज्ञात", isExecutiveReceipt ? "कार्यकारिणी सदस्य (Executive Member)" : "प्राथमिक सदस्य (Primary Member)", main?.mobileNo || "-", null, target.address || null, target.gaav || null, target.taluka || null, target.city || "अमरावती", target.district || "अमरावती", target.state || "महाराष्ट्र", target.country || "भारत", target.pincode || null, null, target.registrationFee || 0, target.paymentMethod || null, target.paymentReference || null, target.referredBy || null, target.date || null, JSON.stringify(target.familyMembers || []), JSON.stringify(target), new Date(), deletedBy || "Admin", reason || (isExecutiveReceipt ? "Executive Registration Deleted" : "Primary Member Registration Deleted"));
+        }
+        catch (archiveErr) {
+            console.warn("Failed to archive deleted primary registration to DeletedMember:", archiveErr);
+        }
         // Use transaction to delete family members, main members, and registration
         const [deletedFamily, deletedMain, deletedReg] = await prisma_1.prisma.$transaction([
             prisma_1.prisma.familyMember.deleteMany({ where: { registrationId: regId } }),
@@ -92,7 +112,9 @@ const deleteRegistrationByIdOrReceipt = async (identifier) => {
 app.delete("/api/register/:id", async (req, res) => {
     try {
         const identifier = String(req.params.id);
-        const result = await deleteRegistrationByIdOrReceipt(identifier);
+        const reason = req.body?.reason ? String(req.body.reason) : undefined;
+        const deletedBy = req.body?.deletedBy ? String(req.body.deletedBy) : undefined;
+        const result = await deleteRegistrationByIdOrReceipt(identifier, reason, deletedBy);
         if (!result) {
             res.status(404).json({
                 success: false,
@@ -102,7 +124,7 @@ app.delete("/api/register/:id", async (req, res) => {
         }
         res.json({
             success: true,
-            message: "नोंदणी अर्ज यशस्वीरित्या डेटाबेसमधून हटवला गेला",
+            message: "नोंदणी अर्ज यशस्वीरित्या डेटाबेसमधून हटवला गेला व हटवलेल्या सदस्यांच्या यादीत संग्रहित झाला",
             data: result.registration,
         });
     }
@@ -118,7 +140,9 @@ app.delete("/api/register/:id", async (req, res) => {
 app.post("/api/register/delete/:id", async (req, res) => {
     try {
         const identifier = String(req.params.id);
-        const result = await deleteRegistrationByIdOrReceipt(identifier);
+        const reason = req.body?.reason ? String(req.body.reason) : undefined;
+        const deletedBy = req.body?.deletedBy ? String(req.body.deletedBy) : undefined;
+        const result = await deleteRegistrationByIdOrReceipt(identifier, reason, deletedBy);
         if (!result) {
             res.status(404).json({
                 success: false,
@@ -128,7 +152,7 @@ app.post("/api/register/delete/:id", async (req, res) => {
         }
         res.json({
             success: true,
-            message: "नोंदणी अर्ज यशस्वीरित्या डेटाबेसमधून हटवला गेला",
+            message: "नोंदणी अर्ज यशस्वीरित्या डेटाबेसमधून हटवला गेला व हटवलेल्या सदस्यांच्या यादीत संग्रहित झाला",
             data: result.registration,
         });
     }
@@ -144,7 +168,9 @@ app.post("/api/register/delete/:id", async (req, res) => {
 app.delete("/api/registrations/:id", async (req, res) => {
     try {
         const identifier = String(req.params.id);
-        const result = await deleteRegistrationByIdOrReceipt(identifier);
+        const reason = req.body?.reason ? String(req.body.reason) : undefined;
+        const deletedBy = req.body?.deletedBy ? String(req.body.deletedBy) : undefined;
+        const result = await deleteRegistrationByIdOrReceipt(identifier, reason, deletedBy);
         if (!result) {
             res.status(404).json({
                 success: false,
@@ -154,7 +180,7 @@ app.delete("/api/registrations/:id", async (req, res) => {
         }
         res.json({
             success: true,
-            message: "नोंदणी अर्ज यशस्वीरित्या डेटाबेसमधून हटवला गेला",
+            message: "नोंदणी अर्ज यशस्वीरित्या डेटाबेसमधून हटवला गेला व हटवलेल्या सदस्यांच्या यादीत संग्रहित झाला",
             data: result.registration,
         });
     }
@@ -2019,6 +2045,7 @@ const handleExecutiveDelete = async (req, res) => {
             }
         }
         // 3. Delete any linked MemberRegistration / MainMember records from PostgreSQL DB
+        let linkedDeletedCount = 0;
         try {
             const orConditions = [{ receiptNo: id }];
             if (mobileToPurge)
@@ -2030,11 +2057,29 @@ const handleExecutiveDelete = async (req, res) => {
                 select: { id: true }
             });
             for (const reg of linkedRegs) {
-                await deleteRegistrationByIdOrReceipt(reg.id);
+                await deleteRegistrationByIdOrReceipt(reg.id, "Executive registration deleted", "Super Admin");
+                linkedDeletedCount++;
             }
         }
         catch (regErr) {
             console.warn("Linked registration purge warning:", regErr);
+        }
+        // If no linked registration was archived, archive the executive member directly into DeletedMember
+        if (linkedDeletedCount === 0 && (targetExec || storeMatch)) {
+            try {
+                const execItem = targetExec || storeMatch;
+                const delId = `del_exec_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+                await prisma_1.prisma.$executeRawUnsafe(`INSERT INTO "DeletedMember" (
+                        "id", "memberType", "originalId", "receiptNo", "memberNo", "fullName",
+                        "designation", "mobileNo", "email", "address", "gaav", "taluka",
+                        "city", "district", "state", "country", "pincode", "photoUrl",
+                        "registrationFee", "paymentMethod", "paymentReference", "referredBy",
+                        "registrationDate", "familyMembers", "fullData", "deletedAt", "deletedBy", "reason"
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24::jsonb, $25::jsonb, $26, $27, $28)`, delId, "EXECUTIVE", execItem.id || id, execItem.receiptNo || null, execItem.memberNo || execItem.seriesNo || null, execItem.fullName || nameToPurge || "अज्ञात", execItem.designation || "कार्यकारिणी सदस्य", execItem.mobileNo || mobileToPurge || "-", null, execItem.address || null, execItem.gaav || null, execItem.taluka || null, execItem.city || "अमरावती", execItem.district || "अमरावती", execItem.state || "महाराष्ट्र", execItem.country || "भारत", execItem.pincode || null, execItem.photoUrl || null, execItem.registrationFee || 1001, execItem.paymentMethod || "Cash", null, "Super Admin", execItem.createdAt ? new Date(execItem.createdAt).toISOString().slice(0, 10) : null, JSON.stringify([]), JSON.stringify({ exec: execItem }), new Date(), "Super Admin", "Executive member deleted");
+            }
+            catch (archiveErr) {
+                console.warn("Failed to archive deleted standalone executive:", archiveErr);
+            }
         }
         // 4. Purge from local JSON store
         const storeIndices = [];
@@ -2052,7 +2097,7 @@ const handleExecutiveDelete = async (req, res) => {
         saveExecutivesToFile(executivesStore);
         res.json({
             success: true,
-            message: "कार्यकारिणी सदस्य व संबंधित डेटाबेसमधील सर्व नोंदी यशस्वीरित्या हटवल्या गेल्या.",
+            message: "कार्यकारिणी सदस्य व संबंधित डेटाबेसमधील सर्व नोंदी यशस्वीरित्या हटवल्या गेल्या व हटवलेल्या सदस्यांच्या यादीत संग्रहित झाल्या.",
             data: deleted || targetExec || { id },
         });
     }
@@ -2063,6 +2108,299 @@ const handleExecutiveDelete = async (req, res) => {
 };
 app.delete(["/api/executives/:id", "/api/executives/delete/:id"], handleExecutiveDelete);
 app.post(["/api/executives/delete/:id"], handleExecutiveDelete);
+// ==================== DELETED MEMBERS MANAGEMENT ENDPOINTS ====================
+// GET /api/deleted-members - Fetch all deleted members (both Primary and Executive)
+app.get(["/api/deleted-members", "/api/deleted-members/all"], async (req, res) => {
+    try {
+        const memberType = String(req.query.type || "ALL").toUpperCase();
+        const search = String(req.query.search || "").trim();
+        let query = `SELECT * FROM "DeletedMember"`;
+        const conditions = [];
+        const params = [];
+        if (memberType === "PRIMARY" || memberType === "EXECUTIVE") {
+            params.push(memberType);
+            conditions.push(`"memberType" = $${params.length}`);
+        }
+        if (search) {
+            params.push(`%${search}%`);
+            const pIdx = `$${params.length}`;
+            conditions.push(`(
+                "fullName" ILIKE ${pIdx} OR
+                "mobileNo" ILIKE ${pIdx} OR
+                "receiptNo" ILIKE ${pIdx} OR
+                "memberNo" ILIKE ${pIdx} OR
+                "city" ILIKE ${pIdx} OR
+                "district" ILIKE ${pIdx} OR
+                "designation" ILIKE ${pIdx}
+            )`);
+        }
+        if (conditions.length > 0) {
+            query += ` WHERE ` + conditions.join(" AND ");
+        }
+        query += ` ORDER BY "deletedAt" DESC`;
+        const rows = await (0, prisma_1.withDbRetry)(() => prisma_1.prisma.$queryRawUnsafe(query, ...params));
+        const formatted = rows.map((r) => {
+            let familyMembers = r.familyMembers;
+            if (typeof familyMembers === "string") {
+                try {
+                    familyMembers = JSON.parse(familyMembers);
+                }
+                catch (_) { }
+            }
+            let fullData = r.fullData;
+            if (typeof fullData === "string") {
+                try {
+                    fullData = JSON.parse(fullData);
+                }
+                catch (_) { }
+            }
+            let mainMembers = fullData?.mainMembers || [];
+            if (typeof mainMembers === "string") {
+                try {
+                    mainMembers = JSON.parse(mainMembers);
+                }
+                catch (_) { }
+            }
+            if (!Array.isArray(mainMembers) || mainMembers.length === 0) {
+                mainMembers = [{
+                        srNo: 1,
+                        fullName: r.fullName,
+                        memberNo: r.memberNo || "-",
+                        mobileNo: r.mobileNo || "-",
+                        prabhagNo: "-",
+                    }];
+            }
+            return {
+                ...r,
+                mainMembers,
+                familyMembers: Array.isArray(familyMembers) ? familyMembers : [],
+                fullData,
+                deletedAt: r.deletedAt instanceof Date ? r.deletedAt.toISOString() : String(r.deletedAt)
+            };
+        });
+        res.json({ success: true, data: formatted });
+    }
+    catch (error) {
+        console.error("Fetch Deleted Members Error:", error);
+        res.status(500).json({ success: false, error: "डेटाबेस सर्व्हर त्रुटी: हटवलेल्या सदस्यांची माहिती आणता आली नाही." });
+    }
+});
+// GET /api/deleted-members/:id - Fetch single deleted member details
+app.get("/api/deleted-members/:id", async (req, res) => {
+    try {
+        const id = String(req.params.id);
+        const rows = await (0, prisma_1.withDbRetry)(() => prisma_1.prisma.$queryRawUnsafe(`SELECT * FROM "DeletedMember" WHERE "id" = $1 LIMIT 1`, id));
+        if (!rows || rows.length === 0) {
+            res.status(404).json({ success: false, error: "हटवलेला सदस्य सापडला नाही!" });
+            return;
+        }
+        const r = rows[0];
+        let familyMembers = r.familyMembers;
+        if (typeof familyMembers === "string") {
+            try {
+                familyMembers = JSON.parse(familyMembers);
+            }
+            catch (_) { }
+        }
+        let fullData = r.fullData;
+        if (typeof fullData === "string") {
+            try {
+                fullData = JSON.parse(fullData);
+            }
+            catch (_) { }
+        }
+        let mainMembers = fullData?.mainMembers || [];
+        if (typeof mainMembers === "string") {
+            try {
+                mainMembers = JSON.parse(mainMembers);
+            }
+            catch (_) { }
+        }
+        if (!Array.isArray(mainMembers) || mainMembers.length === 0) {
+            mainMembers = [{
+                    srNo: 1,
+                    fullName: r.fullName,
+                    memberNo: r.memberNo || "-",
+                    mobileNo: r.mobileNo || "-",
+                    prabhagNo: "-",
+                }];
+        }
+        res.json({
+            success: true,
+            data: {
+                ...r,
+                mainMembers,
+                familyMembers: Array.isArray(familyMembers) ? familyMembers : [],
+                fullData,
+                deletedAt: r.deletedAt instanceof Date ? r.deletedAt.toISOString() : String(r.deletedAt)
+            }
+        });
+    }
+    catch (error) {
+        console.error("Fetch Single Deleted Member Error:", error);
+        res.status(500).json({ success: false, error: "डेटाबेस सर्व्हर त्रुटी: तपशील आणता आले नाहीत." });
+    }
+});
+// POST /api/deleted-members/restore/:id - Restore a deleted member back to active
+app.post("/api/deleted-members/restore/:id", async (req, res) => {
+    try {
+        const id = String(req.params.id);
+        const rows = await (0, prisma_1.withDbRetry)(() => prisma_1.prisma.$queryRawUnsafe(`SELECT * FROM "DeletedMember" WHERE "id" = $1 LIMIT 1`, id));
+        if (!rows || rows.length === 0) {
+            res.status(404).json({ success: false, error: "हटवलेला सदस्य सापडला नाही!" });
+            return;
+        }
+        const item = rows[0];
+        let fullData = item.fullData;
+        if (typeof fullData === "string") {
+            try {
+                fullData = JSON.parse(fullData);
+            }
+            catch (_) { }
+        }
+        if (item.memberType === "PRIMARY") {
+            const regData = fullData || {};
+            const regId = item.originalId || `reg_${Date.now()}`;
+            const receiptNo = item.receiptNo || `MPTM-R${Date.now().toString().slice(-5)}`;
+            // Check if receipt already exists
+            const existing = await prisma_1.prisma.memberRegistration.findFirst({
+                where: { OR: [{ id: regId }, { receiptNo }] }
+            });
+            if (existing) {
+                res.status(400).json({ success: false, error: `या पावती क्रमांकाची (${receiptNo}) नोंदणी आधीपासून डेटाबेसमध्ये सक्रिय आहे!` });
+                return;
+            }
+            // Restore MemberRegistration
+            await (0, prisma_1.withDbRetry)(() => prisma_1.prisma.memberRegistration.create({
+                data: {
+                    id: regId,
+                    receiptNo: receiptNo,
+                    date: item.registrationDate || new Date().toISOString().slice(0, 10),
+                    registrationFee: item.registrationFee || 500,
+                    amountInWords: regData.amountInWords || "",
+                    address: item.address || "",
+                    gaav: item.gaav || null,
+                    taluka: item.taluka || null,
+                    city: item.city || "अमरावती",
+                    district: item.district || "अमरावती",
+                    state: item.state || "महाराष्ट्र",
+                    country: item.country || "भारत",
+                    pincode: item.pincode || null,
+                    paymentMethod: item.paymentMethod || "Cash",
+                    paymentScreenshot: regData.paymentScreenshot || null,
+                    referredBy: item.referredBy || null,
+                    publicToken: regData.publicToken || `tok_${Date.now()}`,
+                    status: "ACTIVE",
+                    paymentMode: regData.paymentMode || (item.paymentMethod === "Cash" ? "CASH" : "ONLINE"),
+                    paymentReference: item.paymentReference || null,
+                    amountPaise: regData.amountPaise || (item.registrationFee ? item.registrationFee * 100 : null),
+                    mainMembers: {
+                        create: (regData.mainMembers && regData.mainMembers.length > 0)
+                            ? regData.mainMembers.map((m, idx) => ({
+                                srNo: m.srNo || idx + 1,
+                                memberNo: m.memberNo || item.memberNo || `MPTM-M${Date.now().toString().slice(-4)}`,
+                                fullName: m.fullName || item.fullName,
+                                mobileNo: m.mobileNo || item.mobileNo,
+                                prabhagNo: m.prabhagNo || "-",
+                            }))
+                            : [{
+                                    srNo: 1,
+                                    memberNo: item.memberNo || `MPTM-M${Date.now().toString().slice(-4)}`,
+                                    fullName: item.fullName,
+                                    mobileNo: item.mobileNo,
+                                    prabhagNo: "-",
+                                }]
+                    },
+                    familyMembers: {
+                        create: (regData.familyMembers && regData.familyMembers.length > 0)
+                            ? regData.familyMembers.map((f, idx) => ({
+                                srNo: f.srNo || idx + 1,
+                                name: f.name || "",
+                                relation: f.relation || "",
+                                dob: f.dob || "",
+                                occupation: f.occupation || "",
+                                mobile: f.mobile || "",
+                            }))
+                            : []
+                    }
+                }
+            }));
+        }
+        else {
+            // EXECUTIVE restore
+            const execModel = getExecutivePrismaModel();
+            const execData = fullData?.exec || fullData || {};
+            const execId = item.originalId || `exec_${Date.now()}`;
+            if (execModel) {
+                await (0, prisma_1.withDbRetry)(() => execModel.create({
+                    data: {
+                        id: execId,
+                        fullName: item.fullName,
+                        designation: item.designation || "कार्यकारिणी सदस्य",
+                        mobileNo: item.mobileNo,
+                        address: item.address || null,
+                        gaav: item.gaav || null,
+                        taluka: item.taluka || null,
+                        city: item.city || "अमरावती",
+                        district: item.district || "अमरावती",
+                        state: item.state || "महाराष्ट्र",
+                        country: item.country || "भारत",
+                        pincode: item.pincode || null,
+                        photoUrl: item.photoUrl || null,
+                        status: "ACTIVE",
+                    }
+                }));
+            }
+            // Restore in local store as well
+            executivesStore.push({
+                id: execId,
+                fullName: item.fullName,
+                designation: item.designation || "कार्यकारिणी सदस्य",
+                mobileNo: item.mobileNo,
+                address: item.address || "",
+                gaav: item.gaav || "",
+                taluka: item.taluka || "",
+                city: item.city || "अमरावती",
+                district: item.district || "अमरावती",
+                state: item.state || "Maharashtra",
+                country: item.country || "India",
+                pincode: item.pincode || "",
+                photoUrl: item.photoUrl || "",
+                status: "ACTIVE",
+                receiptNo: item.receiptNo || null,
+                memberNo: item.memberNo || null,
+                seriesNo: item.memberNo || null,
+                registrationFee: item.registrationFee || 1001,
+                paymentMethod: item.paymentMethod || "Cash",
+                createdAt: item.registrationDate ? new Date(item.registrationDate).toISOString() : new Date().toISOString(),
+                updatedAt: new Date().toISOString()
+            });
+            saveExecutivesToFile(executivesStore);
+        }
+        // Remove from DeletedMember table
+        await (0, prisma_1.withDbRetry)(() => prisma_1.prisma.$executeRawUnsafe(`DELETE FROM "DeletedMember" WHERE "id" = $1`, id));
+        res.json({
+            success: true,
+            message: "सदस्य यशस्वीरित्या मुख्य यादीमध्ये पूर्ववत (Restore) करण्यात आला आहे!"
+        });
+    }
+    catch (error) {
+        console.error("Restore Deleted Member Error:", error);
+        res.status(500).json({ success: false, error: "सदस्य पूर्ववत करताना सर्व्हर त्रुटी: " + (error.message || "") });
+    }
+});
+// DELETE /api/deleted-members/:id - Permanently delete member from DeletedMember archive
+app.delete(["/api/deleted-members/:id", "/api/deleted-members/delete/:id"], async (req, res) => {
+    try {
+        const id = String(req.params.id);
+        await (0, prisma_1.withDbRetry)(() => prisma_1.prisma.$executeRawUnsafe(`DELETE FROM "DeletedMember" WHERE "id" = $1`, id));
+        res.json({ success: true, message: "सदस्य कायमस्वरूपी हटवला गेला आहे." });
+    }
+    catch (error) {
+        console.error("Permanent Delete Member Error:", error);
+        res.status(500).json({ success: false, error: "कायमचे हटवताना सर्व्हर त्रुटी झाली." });
+    }
+});
 const formatDbAd = (ad) => {
     let socialLinks = {};
     if (ad.socialLinks) {
