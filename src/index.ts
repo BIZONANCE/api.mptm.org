@@ -700,7 +700,7 @@ app.post("/api/register", async (req: Request, res: Response) => {
 
 
 
-// Managed Users Data Structure & Disk Persistence
+// Managed Users Data Structure
 interface ManagedUser {
     id: string;
     email: string;
@@ -714,93 +714,35 @@ interface ManagedUser {
     createdAt: string;
 }
 
-const USERS_FILE_PATH = path.join(__dirname, "managed_users.json");
-
-const loadManagedUsers = (): ManagedUser[] => {
-    try {
-        if (fs.existsSync(USERS_FILE_PATH)) {
-            const data = fs.readFileSync(USERS_FILE_PATH, "utf-8");
-            const parsed = JSON.parse(data);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-                return parsed;
-            }
-        }
-    } catch (e) {
-        console.error("Failed to load managed_users.json:", e);
-    }
-    return [
-        {
-            id: "usr_default_1",
-            email: "admin@mptmamravati.org",
-            name: "प्रशासक (Admin)",
-            phone: "9876543210",
-            date: "21/08/2026",
-            time: "10:00 AM",
-            status: "VERIFIED",
-            role: "Super Admin",
-            createdAt: new Date().toISOString(),
-        },
-        {
-            id: "usr_default_2",
-            email: "sdsumit6446@gmail.com",
-            name: "Sumit Dhole",
-            phone: "8459073887",
-            date: "21/08/2026",
-            time: "10:54 AM",
-            status: "VERIFIED",
-            role: "User",
-            createdAt: new Date().toISOString(),
-        },
-        {
-            id: "usr_default_3",
-            email: "ybhatkar701@gmail.com",
-            name: "Yuvraj Bhatkar",
-            phone: "8766735625",
-            date: "21/08/2026",
-            time: "02:57 PM",
-            status: "VERIFIED",
-            role: "User",
-            createdAt: new Date().toISOString(),
-        },
-    ];
-};
-
-let managedUsersStore: ManagedUser[] = loadManagedUsers();
-
-const saveManagedUsers = () => {
-    try {
-        fs.writeFileSync(USERS_FILE_PATH, JSON.stringify(managedUsersStore, null, 2), "utf-8");
-    } catch (e) {
-        console.error("Failed to save managed_users.json:", e);
-    }
-};
-
-// Save initial store to disk if not exists
-saveManagedUsers();
-
-// Helper to check if an email is registered by Super Admin
-const isEmailRegisteredInBackend = (email: string): boolean => {
+// Helper to check if an email is registered by Super Admin (Database-first)
+const isEmailRegisteredInBackend = async (email: string): Promise<boolean> => {
     const clean = email.trim().toLowerCase();
-    if (clean === "mptmamravati.org" || clean === "admin@mptmamravati.org" || clean === "mptmamravati@gmail.com") return true;
-    return managedUsersStore.some((u) => u.email.trim().toLowerCase() === clean);
+    if (clean === "mptmamravati.org" || clean === "admin@mptmamravati.org" || clean === "mptmamravati@gmail.com" || clean === "admin" || clean === "superadmin") return true;
+    try {
+        const u = await prisma.managedUser.findFirst({
+            where: { email: { equals: clean, mode: "insensitive" } },
+        });
+        return !!u;
+    } catch (err) {
+        console.warn("DB check email warning:", err);
+        return false;
+    }
 };
 
-// GET /api/users - Get all managed users (Database with JSON fallback)
+// GET /api/users - Get all managed users directly from Database
 app.get("/api/users", async (req: Request, res: Response) => {
     try {
         const dbUsers = await withDbRetry(() => prisma.managedUser.findMany({
             orderBy: { createdAt: "desc" }
         }));
-        if (dbUsers && dbUsers.length > 0) {
-            return res.json({ success: true, data: dbUsers });
-        }
-    } catch (dbErr) {
-        console.warn("DB fetch users warning, using JSON fallback:", (dbErr as any)?.message || dbErr);
+        return res.json({ success: true, data: dbUsers || [] });
+    } catch (dbErr: any) {
+        console.error("DB fetch users error:", dbErr?.message || dbErr);
+        return res.status(500).json({ success: false, error: "Failed to fetch users from database", data: [] });
     }
-    res.json({ success: true, data: managedUsersStore });
 });
 
-// POST /api/users - Add or update a managed user in DB and JSON
+// POST /api/users - Add or update a managed user directly in Database
 app.post("/api/users", async (req: Request, res: Response) => {
     const { email, name, phone, city, date, time, status, role, id } = req.body;
     if (!email) {
@@ -808,96 +750,82 @@ app.post("/api/users", async (req: Request, res: Response) => {
         return;
     }
     const cleanEmail = email.trim().toLowerCase();
-    const existingIndex = managedUsersStore.findIndex(
-        (u) => u.email.trim().toLowerCase() === cleanEmail || (id && u.id === id)
-    );
-
     const now = new Date();
-    const existingUser = existingIndex >= 0 ? managedUsersStore[existingIndex] : null;
 
-    const newUser: ManagedUser = {
-        id: id || (existingUser ? existingUser.id : `usr_${Date.now()}`),
-        email: cleanEmail,
-        name: name !== undefined ? name : (existingUser ? existingUser.name || "" : ""),
-        phone: phone !== undefined ? phone : (existingUser ? existingUser.phone || "" : ""),
-        city: city !== undefined ? city : (existingUser ? existingUser.city || "" : ""),
-        date: date || (existingUser ? existingUser.date : now.toLocaleDateString("en-GB")),
-        time: time || (existingUser ? existingUser.time : now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true })),
-        status: status || (existingUser ? existingUser.status : "VERIFIED"),
-        role: role || (existingUser ? existingUser.role : "User"),
-        createdAt: (existingUser && existingUser.createdAt) ? existingUser.createdAt : now.toISOString(),
-    };
-
-    // 1. Save in Database
     try {
-        await withDbRetry(() => prisma.managedUser.upsert({
+        const existingUser = await prisma.managedUser.findFirst({
+            where: {
+                OR: [
+                    { email: { equals: cleanEmail, mode: "insensitive" } },
+                    ...(id ? [{ id }] : [])
+                ]
+            }
+        });
+
+        const userId = id || existingUser?.id || `usr_${Date.now()}`;
+        const userDate = date || existingUser?.date || now.toLocaleDateString("en-GB");
+        const userTime = time || existingUser?.time || now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true });
+        const userStatus = status || existingUser?.status || "VERIFIED";
+        const userRole = role || existingUser?.role || "User";
+        const userName = name !== undefined ? name : (existingUser?.name || "");
+        const userPhone = phone !== undefined ? phone : (existingUser?.phone || "");
+        const userCity = city !== undefined ? city : (existingUser?.city || "Amravati");
+        const createdAt = existingUser?.createdAt || now;
+
+        const savedUser = await withDbRetry(() => prisma.managedUser.upsert({
             where: { email: cleanEmail },
             update: {
-                name: newUser.name,
-                phone: newUser.phone,
-                city: newUser.city || null,
-                date: newUser.date || null,
-                time: newUser.time || null,
-                status: newUser.status || "VERIFIED",
-                role: newUser.role || "User",
+                name: userName,
+                phone: userPhone,
+                city: userCity || null,
+                date: userDate || null,
+                time: userTime || null,
+                status: userStatus || "VERIFIED",
+                role: userRole || "User",
             },
             create: {
-                id: newUser.id,
+                id: userId,
                 email: cleanEmail,
-                name: newUser.name,
-                phone: newUser.phone,
-                city: newUser.city || null,
-                date: newUser.date || null,
-                time: newUser.time || null,
-                status: newUser.status || "VERIFIED",
-                role: newUser.role || "User",
-                createdAt: new Date(newUser.createdAt),
+                name: userName,
+                phone: userPhone,
+                city: userCity || null,
+                date: userDate || null,
+                time: userTime || null,
+                status: userStatus || "VERIFIED",
+                role: userRole || "User",
+                createdAt: createdAt,
             }
         }));
-    } catch (dbErr) {
-        console.warn("DB save managed user warning:", (dbErr as any)?.message || dbErr);
-    }
 
-    // 2. Keep JSON backup
-    if (existingIndex >= 0) {
-        managedUsersStore[existingIndex] = newUser;
-    } else {
-        managedUsersStore.unshift(newUser);
-    }
-    saveManagedUsers();
+        const allUsers = await withDbRetry(() => prisma.managedUser.findMany({
+            orderBy: { createdAt: "desc" }
+        }));
 
-    res.json({ success: true, data: newUser, users: managedUsersStore });
+        res.json({ success: true, data: savedUser, users: allUsers });
+    } catch (dbErr: any) {
+        console.error("DB save managed user error:", dbErr?.message || dbErr);
+        res.status(500).json({ success: false, error: "डेटाबेसमध्ये युझर सेव्ह करताना त्रुटी आली." });
+    }
 });
 
-// DELETE /api/users/:id - Delete managed user by ID or Email in DB and JSON
+// DELETE /api/users/:id - Delete managed user by ID or Email directly in Database
 app.delete("/api/users/:id", async (req: Request, res: Response) => {
-    const targetId = String(req.params.id).trim().toLowerCase();
-    
-    // 1. Delete in Database
+    const targetId = String(req.params.id).trim();
+    const targetIdLower = targetId.toLowerCase();
+
     try {
         await withDbRetry(() => prisma.managedUser.deleteMany({
             where: {
                 OR: [
                     { id: targetId },
-                    { email: targetId }
+                    { email: { equals: targetIdLower, mode: "insensitive" } }
                 ]
             }
         }));
-    } catch (dbErr) {
-        console.warn("DB delete user warning:", (dbErr as any)?.message || dbErr);
-    }
-
-    // 2. Delete in JSON backup
-    const index = managedUsersStore.findIndex(
-        (u) => u.id === targetId || u.email.trim().toLowerCase() === targetId
-    );
-
-    if (index >= 0) {
-        const deleted = managedUsersStore.splice(index, 1);
-        saveManagedUsers();
-        res.json({ success: true, message: "युझर हटवला गेला", deleted: deleted[0] });
-    } else {
-        res.json({ success: true, message: "युझर डेटाबेसमधून हटवला गेला" });
+        res.json({ success: true, message: "युझर डेटाबेसमधून यशस्वीरित्या हटवला गेला." });
+    } catch (dbErr: any) {
+        console.error("DB delete user error:", dbErr?.message || dbErr);
+        res.status(500).json({ success: false, error: "युझर हटवताना त्रुटी आली." });
     }
 });
 
@@ -966,8 +894,10 @@ app.post("/api/users/send-verification", async (req: Request, res: Response) => 
 
         if (isRegistration) {
             // Super Admin adding a new user from Manage Users page
-            const isAlreadyAdded = managedUsersStore.some((u) => u.email.trim().toLowerCase() === cleanEmail);
-            if (isAlreadyAdded) {
+            const existingInDb = await prisma.managedUser.findFirst({
+                where: { email: { equals: cleanEmail, mode: "insensitive" } }
+            });
+            if (existingInDb) {
                 res.status(400).json({
                     success: false,
                     error: "⚠️ हा इमेल आयडी आधीच नोंदणीकृत व जोडलेला आहे!",
@@ -976,7 +906,8 @@ app.post("/api/users/send-verification", async (req: Request, res: Response) => 
             }
         } else {
             // User Login flow: Check if email is registered by Super Admin
-            if (!isEmailRegisteredInBackend(cleanEmail)) {
+            const isRegistered = await isEmailRegisteredInBackend(cleanEmail);
+            if (!isRegistered) {
                 res.status(400).json({
                     success: false,
                     error: "⚠️ हा इमेल आयडी नोंदणीकृत नाही! पडताळणी कोड (OTP) फक्त मुख्य प्रशासकाने (Super Admin) जोडलेल्या इमेलवरच पाठवला जाऊ शकतो.",
@@ -1043,8 +974,8 @@ app.post("/api/users/send-verification", async (req: Request, res: Response) => 
     }
 });
 
-// POST /api/users/verify-code - Verify user code
-app.post("/api/users/verify-code", (req: Request, res: Response) => {
+// POST /api/users/verify-code - Verify user code and return DB user if found
+app.post("/api/users/verify-code", async (req: Request, res: Response) => {
     const { email, code } = req.body;
     if (!email || !code) {
         res.status(400).json({ success: false, error: "इमेल व पडताळणी कोड आवश्यक आहे!" });
@@ -1071,7 +1002,22 @@ app.post("/api/users/verify-code", (req: Request, res: Response) => {
     }
 
     verificationStore.delete(cleanEmail);
-    res.json({ success: true, verified: true, message: "इमेल यशस्वीरित्या सत्यप्रमाणित झाला!" });
+
+    let dbUser: any = null;
+    try {
+        dbUser = await prisma.managedUser.findFirst({
+            where: { email: { equals: cleanEmail, mode: "insensitive" } }
+        });
+    } catch (err) {
+        // ignore
+    }
+
+    res.json({
+        success: true,
+        verified: true,
+        message: "इमेल यशस्वीरित्या सत्यप्रमाणित झाला!",
+        user: dbUser || null
+    });
 });
 
 // ==========================================
