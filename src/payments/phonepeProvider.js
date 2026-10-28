@@ -98,12 +98,38 @@ async function getStatus(merchantOrderId) {
     state = 'FAILED';
   }
 
-  const paymentDetail = Array.isArray(response.payment_details) && response.payment_details.length > 0
-    ? response.payment_details[0]
-    : null;
+  const paymentDetail = (Array.isArray(response.paymentDetails) && response.paymentDetails.length > 0)
+    ? response.paymentDetails[0]
+    : (Array.isArray(response.payment_details) && response.payment_details.length > 0
+      ? response.payment_details[0]
+      : null);
 
-  const paymentMode = paymentDetail?.payment_mode || 'PhonePe / UPI';
-  const paymentReference = paymentDetail?.transaction_id || response.order_id || merchantOrderId;
+  const rawMode = (
+    paymentDetail?.paymentMode ||
+    paymentDetail?.payment_mode ||
+    paymentDetail?.instrument?.type ||
+    response.paymentMode ||
+    response.payment_mode ||
+    ''
+  ).toString().toUpperCase().trim();
+
+  let paymentMode = 'UPI';
+  if (rawMode.includes('CARD') || rawMode.includes('TOKEN')) {
+    paymentMode = 'Card';
+  } else if (rawMode.includes('NET') || rawMode.includes('BANKING')) {
+    paymentMode = 'Net Banking';
+  } else if (rawMode.includes('UPI') || rawMode.includes('INTENT') || rawMode.includes('QR') || rawMode.includes('PPE')) {
+    paymentMode = 'UPI';
+  } else if (rawMode) {
+    paymentMode = rawMode;
+  }
+
+  const paymentReference =
+    paymentDetail?.transactionId ||
+    paymentDetail?.transaction_id ||
+    response.orderId ||
+    response.order_id ||
+    merchantOrderId;
 
   return {
     state,

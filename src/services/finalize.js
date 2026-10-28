@@ -186,12 +186,24 @@ async function finalizeRegistration(pendingPaymentIdOrOptions, options = {}) {
           state: payload.state || 'महाराष्ट्र',
           country: payload.country || 'भारत',
           pincode: payload.pincode || null,
-          paymentMethod: lockedPayment.provider === 'cash' ? 'रोख' : 'ऑनलाइन (PhonePe)',
+          paymentMethod: lockedPayment.provider === 'cash' 
+            ? 'रोख (Cash)' 
+            : (String(paymentMode || '').toUpperCase().includes('CARD') || String(paymentMode || '').toUpperCase().includes('TOKEN')
+                ? 'कार्ड (Card)'
+                : String(paymentMode || '').toUpperCase().includes('NET') || String(paymentMode || '').toUpperCase().includes('BANK')
+                  ? 'नेट बँकिंग (Net Banking)'
+                  : 'ऑनलाइन (UPI)'),
           referredBy: payload.referredBy || null,
           pendingPaymentId: lockedPayment.id,
           publicToken,
           status: 'ACTIVE',
-          paymentMode: paymentMode || (lockedPayment.provider === 'cash' ? 'CASH' : 'ONLINE'),
+          paymentMode: lockedPayment.provider === 'cash'
+            ? 'CASH'
+            : (String(paymentMode || '').toUpperCase().includes('CARD') || String(paymentMode || '').toUpperCase().includes('TOKEN')
+                ? 'CARD'
+                : String(paymentMode || '').toUpperCase().includes('NET') || String(paymentMode || '').toUpperCase().includes('BANK')
+                  ? 'NET_BANKING'
+                  : 'UPI'),
           paymentReference: paymentRef || lockedPayment.gatewayTxnId || null,
           paymentDetails: paymentDetails || lockedPayment.gatewayResponse || null,
           amountPaise,
@@ -349,7 +361,20 @@ async function finalizeDonation(pendingPaymentIdOrOptions, options = {}) {
           pendingPaymentId: lockedPayment.id,
           publicToken,
           status: 'ACTIVE',
-          paymentMode: paymentMode || (lockedPayment.provider === 'cash' ? 'CASH' : 'ONLINE'),
+          paymentMethod: lockedPayment.provider === 'cash'
+            ? 'रोख (Cash)'
+            : (String(paymentMode || '').toUpperCase().includes('CARD') || String(paymentMode || '').toUpperCase().includes('TOKEN')
+                ? 'कार्ड (Card)'
+                : String(paymentMode || '').toUpperCase().includes('NET') || String(paymentMode || '').toUpperCase().includes('BANK')
+                  ? 'नेट बँकिंग (Net Banking)'
+                  : 'ऑनलाइन (UPI)'),
+          paymentMode: lockedPayment.provider === 'cash'
+            ? 'CASH'
+            : (String(paymentMode || '').toUpperCase().includes('CARD') || String(paymentMode || '').toUpperCase().includes('TOKEN')
+                ? 'CARD'
+                : String(paymentMode || '').toUpperCase().includes('NET') || String(paymentMode || '').toUpperCase().includes('BANK')
+                  ? 'NET_BANKING'
+                  : 'UPI'),
           paymentReference: paymentRef || lockedPayment.gatewayTxnId || null,
           paymentDetails: paymentDetails || lockedPayment.gatewayResponse || null,
           amountPaise,

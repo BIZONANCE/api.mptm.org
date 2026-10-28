@@ -1035,7 +1035,22 @@ router.get('/admin/payments/all', async (req, res) => {
         mainMembers,
         familyMembers,
         address: p.registration?.address || payload.address || '',
-        paymentMode: p.provider === 'cash' ? 'रोख (Cash)' : 'Online UPI',
+        paymentMode: p.provider === 'cash'
+          ? 'रोख (Cash)'
+          : (() => {
+              const raw = (
+                p.registration?.paymentMode ||
+                p.registration?.paymentMethod ||
+                p.donation?.paymentMode ||
+                p.donation?.paymentMethod ||
+                p.gatewayResponse?.paymentDetails?.[0]?.paymentMode ||
+                p.gatewayResponse?.payment_details?.[0]?.payment_mode ||
+                ''
+              ).toString().toUpperCase();
+              if (raw.includes('CARD') || raw.includes('TOKEN')) return 'Card';
+              if (raw.includes('NET') || raw.includes('BANK')) return 'Net Banking';
+              return 'UPI';
+            })(),
         referredBy: ref || null,
         failureReason,
         failureCode,
@@ -1043,6 +1058,7 @@ router.get('/admin/payments/all', async (req, res) => {
         createdAt: p.createdAt,
         date: p.registration?.date || p.donation?.date || null,
         hasValidHmac: Boolean(p.registration?.receiptHmac || p.donation?.receiptHmac),
+        isDeletedMember: Boolean(p.status === 'SUCCESS' && !p.registration && !p.donation),
       });
     }
 
@@ -1111,7 +1127,7 @@ router.get('/admin/payments/all', async (req, res) => {
         mainMembers: [],
         familyMembers: [],
         address: d.address || '',
-        paymentMode: d.paymentMethod || 'Online UPI',
+        paymentMode: d.paymentMethod || 'UPI',
         referredBy: null,
         failureReason: null,
         failureCode: null,
@@ -1338,10 +1354,10 @@ router.get('/admin/payments/failed', async (req, res) => {
     const scopedFailedList = isSuperAdmin
       ? failedList
       : failedList.filter((f) => {
-          const payload = (typeof f.payload === 'object' && f.payload !== null) ? f.payload : {};
-          const ref = String(payload.referredBy || payload.formData?.referredBy || '').trim().toLowerCase();
-          return refAliases.includes(ref);
-        });
+        const payload = (typeof f.payload === 'object' && f.payload !== null) ? f.payload : {};
+        const ref = String(payload.referredBy || payload.formData?.referredBy || '').trim().toLowerCase();
+        return refAliases.includes(ref);
+      });
 
     // Fetch pending payments for merchant order IDs
     const pendingIds = scopedFailedList.map((f) => f.pendingPaymentId).filter(Boolean);
