@@ -5,6 +5,7 @@ import bcrypt from "bcryptjs";
 import nodemailer from "nodemailer";
 import fs from "fs";
 import path from "path";
+import crypto from "crypto";
 import { prisma, withDbRetry } from "./prisma";
 
 dotenv.config();
@@ -292,10 +293,35 @@ const seedDefaultAdmin = async () => {
     }
 };
 
-// Middleware to ensure admin seed on requests without blocking initialization
+let referralTokensMigrated = false;
+const ensureReferralTokens = async () => {
+    if (referralTokensMigrated) return;
+    try {
+        await prisma.$executeRawUnsafe(`ALTER TABLE "ManagedUser" ADD COLUMN IF NOT EXISTS "referralToken" TEXT;`);
+        await prisma.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "ManagedUser_referralToken_key" ON "ManagedUser"("referralToken");`);
+        const usersWithoutToken = await prisma.managedUser.findMany({
+            where: { referralToken: null },
+        });
+        for (const u of usersWithoutToken) {
+            const token = crypto.createHash("sha256").update("mptm_ref_" + u.email.trim().toLowerCase()).digest("hex").substring(0, 8);
+            await prisma.$executeRawUnsafe(`UPDATE "ManagedUser" SET "referralToken" = $1 WHERE id = $2;`, token, u.id);
+        }
+        referralTokensMigrated = true;
+        if (usersWithoutToken.length > 0) {
+            console.log(`[AUTO_MIGRATION] Assigned referral tokens to ${usersWithoutToken.length} users`);
+        }
+    } catch (err: any) {
+        console.warn("[AUTO_MIGRATION] Referral token check warning:", err?.message);
+    }
+};
+
+// Middleware to ensure admin seed and self-healing DB migrations on requests
 app.use(async (_req, _res, next) => {
     if (!adminSeeded) {
         seedDefaultAdmin().catch(() => { });
+    }
+    if (!referralTokensMigrated) {
+        ensureReferralTokens().catch(() => { });
     }
     next();
 });
@@ -632,19 +658,25 @@ app.post("/api/register", async (req: Request, res: Response) => {
 
         // ── Referral Validation ───────────────────────────────────────────────
         // Only store referredBy when it matches a verified ManagedUser email.
-        let validatedReferredBy: string | null = formData.referredBy || req.body.referredBy || null;
-        if (validatedReferredBy && validatedReferredBy.trim()) {
-            const refEmail = validatedReferredBy.trim().toLowerCase();
+        let validatedReferredBy: string | null = null;
+        const incomingRef = String(formData.referredBy || req.body.referredBy || "").trim();
+        if (incomingRef) {
             try {
-                const matchedUser = await prisma.managedUser.findFirst({
-                    where: { email: { equals: refEmail, mode: "insensitive" } },
+                // 1. Try matching by hashed referralToken
+                let matchedUser = await prisma.managedUser.findFirst({
+                    where: { referralToken: incomingRef },
                 });
+                // 2. Fallback to email (legacy support)
                 if (!matchedUser) {
-                    validatedReferredBy = null;
+                    matchedUser = await prisma.managedUser.findFirst({
+                        where: { email: { equals: incomingRef.toLowerCase(), mode: "insensitive" } },
+                    });
                 }
-            } catch (refErr) {
-                console.warn("REF_CHECK: Could not validate referredBy:", (refErr as any)?.message);
-                validatedReferredBy = null;
+                if (matchedUser) {
+                    validatedReferredBy = matchedUser.email;
+                }
+            } catch (refErr: any) {
+                console.warn("[REGISTER_CASH] Could not validate referredBy:", refErr?.message);
             }
         }
         // ─────────────────────────────────────────────────────────────────────
@@ -721,15 +753,23 @@ app.post("/api/register", async (req: Request, res: Response) => {
 
 // GET /api/validate-ref?ref=<email> — Check if a referral code is a registered managed user
 app.get("/api/validate-ref", async (req: Request, res: Response) => {
-    const refParam = String(req.query.ref || "").trim().toLowerCase();
+    const refParam = String(req.query.ref || "").trim();
     if (!refParam) {
         return res.json({ success: true, valid: false, user: null });
     }
     try {
-        const user = await prisma.managedUser.findFirst({
-            where: { email: { equals: refParam, mode: "insensitive" } },
-            select: { id: true, name: true, email: true },
+        // 1. Check by hashed referralToken
+        let user = await prisma.managedUser.findFirst({
+            where: { referralToken: refParam },
+            select: { id: true, name: true, email: true, referralToken: true },
         });
+        // 2. Fallback to email (legacy support)
+        if (!user) {
+            user = await prisma.managedUser.findFirst({
+                where: { email: { equals: refParam.toLowerCase(), mode: "insensitive" } },
+                select: { id: true, name: true, email: true, referralToken: true },
+            });
+        }
         return res.json({ success: true, valid: !!user, user: user || null });
     } catch (err: any) {
         console.warn("validate-ref error:", err?.message);
@@ -748,6 +788,7 @@ interface ManagedUser {
     time?: string;
     status: string;
     role: string;
+    referralToken?: string;
     createdAt: string;
 }
 
@@ -808,6 +849,7 @@ app.post("/api/users", async (req: Request, res: Response) => {
         const userPhone = phone !== undefined ? phone : (existingUser?.phone || "");
         const userCity = city !== undefined ? city : (existingUser?.city || "Amravati");
         const createdAt = existingUser?.createdAt || now;
+        const userToken = (existingUser as any)?.referralToken || crypto.createHash("sha256").update("mptm_ref_" + cleanEmail).digest("hex").substring(0, 8);
 
         const savedUser = await withDbRetry(() => prisma.managedUser.upsert({
             where: { email: cleanEmail },
@@ -819,6 +861,7 @@ app.post("/api/users", async (req: Request, res: Response) => {
                 time: userTime || null,
                 status: userStatus || "VERIFIED",
                 role: userRole || "User",
+                referralToken: userToken,
             },
             create: {
                 id: userId,
@@ -830,6 +873,7 @@ app.post("/api/users", async (req: Request, res: Response) => {
                 time: userTime || null,
                 status: userStatus || "VERIFIED",
                 role: userRole || "User",
+                referralToken: userToken,
                 createdAt: createdAt,
             }
         }));

@@ -202,7 +202,8 @@ model ManagedUser {
   date      String?
   time      String?
   status    String   @default("VERIFIED")
-  role      String   @default("User")
+  role          String   @default("User")
+  referralToken String?  @unique
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }

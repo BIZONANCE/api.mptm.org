@@ -75,17 +75,25 @@ router.post('/registrations/online/start', async (req, res) => {
     // Only accept a referredBy value when it matches a verified ManagedUser email.
     // Any arbitrary text in the ?ref= URL param must be silently dropped.
     if (validatedPayload.referredBy && validatedPayload.referredBy.trim()) {
-      const refEmail = validatedPayload.referredBy.trim().toLowerCase();
+      const incomingRef = validatedPayload.referredBy.trim();
       try {
-        const matchedUser = await prisma.managedUser.findFirst({
-          where: { email: { equals: refEmail, mode: 'insensitive' } },
+        // 1. Check by hashed referralToken
+        let matchedUser = await prisma.managedUser.findFirst({
+          where: { referralToken: incomingRef },
         });
+        // 2. Fallback to email (legacy support)
         if (!matchedUser) {
-          // Not a registered user — strip it (treat as direct)
+          matchedUser = await prisma.managedUser.findFirst({
+            where: { email: { equals: incomingRef.toLowerCase(), mode: 'insensitive' } },
+          });
+        }
+        if (matchedUser) {
+          // Store registered user's email so dashboard filters work seamlessly
+          validatedPayload.referredBy = matchedUser.email;
+        } else {
           validatedPayload.referredBy = null;
         }
       } catch (refCheckErr) {
-        // On DB error, default to null so invalid refs are never stored
         console.warn('[REF_CHECK] Could not validate referredBy against ManagedUser:', refCheckErr?.message);
         validatedPayload.referredBy = null;
       }
