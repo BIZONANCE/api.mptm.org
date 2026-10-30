@@ -630,6 +630,25 @@ app.post("/api/register", async (req: Request, res: Response) => {
         const parsedFee = parseInt(formData.registrationFee, 10);
         const feeNumber = isNaN(parsedFee) || parsedFee < 101 ? 101 : parsedFee;
 
+        // ── Referral Validation ───────────────────────────────────────────────
+        // Only store referredBy when it matches a verified ManagedUser email.
+        let validatedReferredBy: string | null = formData.referredBy || req.body.referredBy || null;
+        if (validatedReferredBy && validatedReferredBy.trim()) {
+            const refEmail = validatedReferredBy.trim().toLowerCase();
+            try {
+                const matchedUser = await prisma.managedUser.findFirst({
+                    where: { email: { equals: refEmail, mode: "insensitive" } },
+                });
+                if (!matchedUser) {
+                    validatedReferredBy = null;
+                }
+            } catch (refErr) {
+                console.warn("REF_CHECK: Could not validate referredBy:", (refErr as any)?.message);
+                validatedReferredBy = null;
+            }
+        }
+        // ─────────────────────────────────────────────────────────────────────
+
         const registration = await withDbRetry(() =>
             prisma.memberRegistration.create({
                 data: {
@@ -647,7 +666,7 @@ app.post("/api/register", async (req: Request, res: Response) => {
                     pincode: formData.pincode ? String(formData.pincode).trim() : null,
                     paymentMethod: formData.paymentMethod || "रोख",
                     paymentScreenshot: paymentScreenshot || null,
-                    referredBy: formData.referredBy || req.body.referredBy || null,
+                    referredBy: validatedReferredBy,
                     mainMembers: {
                         create: mainMembers.map((m: { srNo: number; memberNo: string; fullName: string; mobileNo: string; prabhagNo: string }) => ({
                             srNo: m.srNo,
@@ -699,6 +718,24 @@ app.post("/api/register", async (req: Request, res: Response) => {
 });
 
 
+
+// GET /api/validate-ref?ref=<email> — Check if a referral code is a registered managed user
+app.get("/api/validate-ref", async (req: Request, res: Response) => {
+    const refParam = String(req.query.ref || "").trim().toLowerCase();
+    if (!refParam) {
+        return res.json({ success: true, valid: false, user: null });
+    }
+    try {
+        const user = await prisma.managedUser.findFirst({
+            where: { email: { equals: refParam, mode: "insensitive" } },
+            select: { id: true, name: true, email: true },
+        });
+        return res.json({ success: true, valid: !!user, user: user || null });
+    } catch (err: any) {
+        console.warn("validate-ref error:", err?.message);
+        return res.json({ success: true, valid: false, user: null });
+    }
+});
 
 // Managed Users Data Structure
 interface ManagedUser {

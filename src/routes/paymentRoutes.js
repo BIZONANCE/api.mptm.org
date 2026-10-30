@@ -71,6 +71,27 @@ router.post('/registrations/online/start', async (req, res) => {
       ? 'EXECUTIVE'
       : 'PRIMARY';
 
+    // ── Referral Validation ──────────────────────────────────────────────────
+    // Only accept a referredBy value when it matches a verified ManagedUser email.
+    // Any arbitrary text in the ?ref= URL param must be silently dropped.
+    if (validatedPayload.referredBy && validatedPayload.referredBy.trim()) {
+      const refEmail = validatedPayload.referredBy.trim().toLowerCase();
+      try {
+        const matchedUser = await prisma.managedUser.findFirst({
+          where: { email: { equals: refEmail, mode: 'insensitive' } },
+        });
+        if (!matchedUser) {
+          // Not a registered user — strip it (treat as direct)
+          validatedPayload.referredBy = null;
+        }
+      } catch (refCheckErr) {
+        // On DB error, default to null so invalid refs are never stored
+        console.warn('[REF_CHECK] Could not validate referredBy against ManagedUser:', refCheckErr?.message);
+        validatedPayload.referredBy = null;
+      }
+    }
+    // ────────────────────────────────────────────────────────────────────────
+
     // Check if a PendingPayment already exists with this idempotency key
     const existing = await prisma.pendingPayment.findUnique({
       where: { idempotencyKey: idempotencyKey.trim() },
