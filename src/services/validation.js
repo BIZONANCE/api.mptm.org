@@ -38,7 +38,7 @@ const registrationPayloadSchema = z.object({
   gaav: z.string().trim().max(100).nullable().optional(),
   taluka: z.string().trim().max(100).nullable().optional(),
   city: z.string().trim().max(100).default('अमरावती'),
-  district: z.string().trim().max(100).default('अमरावती'),
+  district: z.string().trim().min(1, 'District is required').max(100),
   state: z.string().trim().max(100).default('महाराष्ट्र'),
   country: z.string().trim().max(100).default('भारत'),
   pincode: z
@@ -76,7 +76,7 @@ const donationPayloadSchema = z.object({
   gaav: z.string().trim().max(100).nullable().optional(),
   taluka: z.string().trim().max(100).nullable().optional(),
   city: z.string().trim().max(100).default('अमरावती'),
-  district: z.string().trim().max(100).default('अमरावती'),
+  district: z.string().trim().min(1, 'District is required').max(100),
   state: z.string().trim().max(100).default('महाराष्ट्र'),
   country: z.string().trim().max(100).default('भारत'),
   pincode: z
